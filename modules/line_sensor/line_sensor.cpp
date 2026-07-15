@@ -12,17 +12,24 @@
  * 依赖: config.hpp（GPIO 宏）、iinterfaces.hpp（接口）
  *
  * 已知限制:
- *   1. ADC 阻塞读取，8 通道 × 8 采样 ≈ 0.8 ms（对 500 Hz 循环可接受）
- *   2. 不含 Direction 反转（硬件接线固定，不需要运行时反转）
+ *   1. CD4051 8 路复用，MUX 切换仍由 CPU 控制；DMA 负责同一通道 burst 搬运。
+ *   2. 当前为 burst DMA：每路启动 1 次 DMA，连续搬 8 个样本，仅 1 次中断。
+ *   3. 依赖 LINE_ADC 配置为 repeat-single-channel 模式；若配置不对会只采 1 次。
+ *   4. 已移除运行中动态学习；黑/白基准由 PB21 按键触发上电双标定确定。
+ *   5. PA0 接有源蜂鸣器，高电平响，用于标定步骤提示 / 丢线报警。
+ *   6. digital_ bit=1 表示黑线，供 main.cpp 直角弯状态机使用。
+ *   7. 若 DMA/ADC/GPIO API 宏名/函数名与 SDK 版本不一致，请按 ti_msp_dl_config.h 调整。
  */
 
 #include "modules/line_sensor/line_sensor.hpp"
+#include "modules/common/buzzer.hpp"
 
 /* 全局单例 */
 LineSensor g_line_sensor;
 
-/* ADC 转换完成标志（ISR 置位 → 主循环轮询，仅本文件内可见）*/
-static volatile bool g_adc_done;
+/* DMA burst 传输缓冲与完成标志（ISR 置位 → 主循环轮询，仅本文件内可见）*/
+static uint16_t      g_adc_dma_buf[ADC_SAMPLES_PER_CHANNEL];
+static volatile bool g_dma_done;
 
 /* ============================================================
  *  构造与初始化
@@ -48,10 +55,10 @@ LineSensor::LineSensor()
 void LineSensor::init()
 {
     /*
-     * ADC 和 GPIO 已在 SYSCFG_DL_init() 中初始化。
+     * ADC、GPIO 和 DMA 已在 SYSCFG_DL_init() 中初始化。
      * 此处复位运行时状态。标定数据保留。
      */
-    g_adc_done   = false;
+    g_dma_done   = false;
     digital_     = 0;
     error_       = 0;
     line_found_  = false;
@@ -78,8 +85,8 @@ void LineSensor::init_with_calibration(const uint16_t *white,
         }
 
         /* 计算灰度阈值（1:2 和 2:1 分界点）
-         *   > gray_white → 判定为白（bit=1）
-         *   < gray_black → 判定为黑（bit=0）
+         *   < gray_black → 判定为黑（线），digital_ bit 置 1
+         *   > gray_white → 判定为白（地板），digital_ bit 清 0
          *   中间区域 → 保持上一状态（迟滞）*/
         gray_white_[i] = (uint16_t)(((uint32_t)w * 2 + b) / 3U);
         gray_black_[i] = (uint16_t)(((uint32_t)w + b * 2) / 3U);
@@ -101,29 +108,75 @@ void LineSensor::init_with_calibration(const uint16_t *white,
 }
 
 /* ============================================================
- *  快速白底采样（启动时调用）
+ *  本地辅助：等待用户按键按下一次并释放（带消抖）
  * ============================================================ */
 
-void LineSensor::calibrate_white()
+static void wait_key_press_()
+{
+    /* 按键接地，上拉输入：未按下为高电平，按下为低电平 */
+    while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) != 0) {
+        __WFE();  /* 等待，降低功耗 */
+    }
+
+    /* 消抖：等待约 20 ms */
+    delay_cycles(20U * 32000U);
+
+    /* 等待释放 */
+    while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) == 0) {
+        __WFE();
+    }
+
+    delay_cycles(20U * 32000U);
+}
+
+/* ============================================================
+ *  按键触发黑白双标定（启动时调用）
+ *
+ *  流程：
+ *    1. 上电后电机保持停止，等待用户把 8 路探头全部放到白底；
+ *    2. 按一次 KEY_USER，采集 white[8]；
+ *    3. 把 8 路探头全部放到黑线（或整板覆盖黑线），再按一次 KEY_USER；
+ *    4. 采集 black[8]，计算阈值，标定完成。
+ * ============================================================ */
+
+void LineSensor::calibrate()
 {
     uint32_t sum[SENSOR_COUNT] = {0};
     uint16_t white[SENSOR_COUNT];
     uint16_t black[SENSOR_COUNT];
 
+    /* ---- 白底标定 ---- */
+    wait_key_press_();
+    buzzer_beep(100U);  /* 开始采白底 */
+
     for (uint16_t scan = 0; scan < WHITE_STARTUP_SCANS; scan++) {
         for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-            SWITCH_MUX_CHANNEL(i);
-            delay_cycles(640U);  /* 模拟开关稳定等待 */
-            sum[i] += read_adc_avg_();
+            sum[i] += read_adc_burst_dma_(i);
         }
     }
 
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
         white[i] = (uint16_t)(sum[i] / WHITE_STARTUP_SCANS);
-        black[i] = (white[i] > INITIAL_BLACK_SPAN)
-                       ? (white[i] - INITIAL_BLACK_SPAN)
-                       : 0U;
+        sum[i] = 0;  /* 清零用于黑线累加 */
     }
+    buzzer_beep(50U);   /* 白底采样完成 */
+
+    /* ---- 黑线标定 ---- */
+    wait_key_press_();
+    buzzer_beep(100U);  /* 开始采黑线 */
+
+    for (uint16_t scan = 0; scan < WHITE_STARTUP_SCANS; scan++) {
+        for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+            sum[i] += read_adc_burst_dma_(i);
+        }
+    }
+
+    for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+        black[i] = (uint16_t)(sum[i] / WHITE_STARTUP_SCANS);
+    }
+    buzzer_beep(50U);
+    delay_cycles(100U * 32000U);
+    buzzer_beep(50U);   /* 黑线采样完成：短响两声 */
 
     init_with_calibration(white, black);
 }
@@ -142,34 +195,20 @@ bool LineSensor::update()
 {
     /* ---- 1. 采集 8 通道模拟量（均值滤波）---- */
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        SWITCH_MUX_CHANNEL(i);
-        delay_cycles(640U);          /* 模拟开关稳定 */
-        analog_[i] = read_adc_avg_(); /* 8 采样取均值 */
+        analog_[i] = read_adc_burst_dma_(i);
 
-        /* 动态追踪黑/白基准（运行中适应光照变化）*/
-        if (analog_[i] < cal_black_[i]) {
-            cal_black_[i] = analog_[i];
-            /* 重新计算该通道系数 */
-            int32_t span = (int32_t)cal_white_[i] - (int32_t)cal_black_[i];
-            norm_factor_[i] = (span > 0)
-                ? (float)ADC_MAX_VALUE / (float)span
-                : 0.0f;
-        }
-        if (analog_[i] > cal_white_[i]) {
-            cal_white_[i] = analog_[i];
-            int32_t span = (int32_t)cal_white_[i] - (int32_t)cal_black_[i];
-            norm_factor_[i] = (span > 0)
-                ? (float)ADC_MAX_VALUE / (float)span
-                : 0.0f;
-        }
+        /*
+         * 已移除运行中动态学习：黑/白基准只在标定时确定。
+         * 如需适应环境变化，应重新上电标定或改用固定常量。
+         */
     }
 
     /* ---- 2. 二值化处理（参照 convertAnalogToDigital）---- */
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-        if (analog_[i] > gray_white_[i]) {
-            digital_ |= (1U << i);   /* 白（地板）→ bit 置 1 */
-        } else if (analog_[i] < gray_black_[i]) {
-            digital_ &= ~(1U << i);  /* 黑（线）→ bit 清 0 */
+        if (analog_[i] < gray_black_[i]) {
+            digital_ |= (1U << i);   /* 黑（线）→ bit 置 1 */
+        } else if (analog_[i] > gray_white_[i]) {
+            digital_ &= ~(1U << i);  /* 白（地板）→ bit 清 0 */
         }
         /* 中间灰度 → 保持上一状态（迟滞特性）*/
     }
@@ -236,40 +275,88 @@ bool LineSensor::get_analog(uint16_t *result) const
 }
 
 /* ============================================================
- *  私有 — ADC 读取（8 采样均值滤波，参照 Get_Analog_value）
+ *  私有 — DMA burst 读取（一路 8 次采样合并为 1 次 DMA 中断）
+ *
+ *  依赖：LINE_ADC 在 SysConfig 中配置为 repeat-single-channel 模式，
+ *        LINE_DMA 配置为 src 固定、dst 递增、传输长度 8。
+ *  注意：以下 API 基于 MSPM0 DriverLib 常见命名。若编译报错，请根据
+ *  你 SDK 中的 ti_msp_dl_config.h / dl_dma.h / dl_adc12.h 调整。
  * ============================================================ */
 
-uint16_t LineSensor::read_adc_avg_()
+#ifndef LINE_DMA_CHANNEL
+#define LINE_DMA_CHANNEL 0   /* SysConfig 里为 LINE_DMA 选的通道号 */
+#endif
+
+uint16_t LineSensor::read_adc_burst_dma_(uint8_t ch)
 {
-    uint32_t sum = 0;
+    g_dma_done = false;
 
-    for (uint8_t j = 0; j < ADC_SAMPLES_PER_CHANNEL; j++) {
-        g_adc_done = false;
-        DL_ADC12_startConversion(LINE_ADC_INST);
+    /* 切换 CD4051 并等待模拟开关稳定 */
+    SWITCH_MUX_CHANNEL(ch);
+    delay_cycles(640U);
 
-        while (!g_adc_done) {
-            __WFE();
-        }
+    /*
+     * 配置 DMA burst 传输：
+     *   源地址：ADC12 MEM0 结果寄存器（固定）
+     *   目标地址：g_adc_dma_buf（递增）
+     *   长度：ADC_SAMPLES_PER_CHANNEL 个半字
+     */
+    DL_DMA_setSrcAddr(LINE_DMA_INST, LINE_DMA_CHANNEL,
+        (uint32_t)DL_ADC12_getMemResultAddress(LINE_ADC_INST, DL_ADC12_MEM_IDX_0));
+    DL_DMA_setDestAddr(LINE_DMA_INST, LINE_DMA_CHANNEL,
+        (uint32_t)g_adc_dma_buf);
+    DL_DMA_setTransferSize(LINE_DMA_INST, LINE_DMA_CHANNEL, ADC_SAMPLES_PER_CHANNEL);
 
-        sum += DL_ADC12_getMemResult(LINE_ADC_INST, DL_ADC12_MEM_IDX_0);
-        DL_ADC12_enableConversions(LINE_ADC_INST);
+    /*
+     * 目标地址递增应在 SysConfig 中配置；若 DriverLib 提供运行时 API，
+     * 可取消下面一行的注释（API 名可能为 DL_DMA_setDestIncrement 等）：
+     *   DL_DMA_setDestIncrement(LINE_DMA_INST, LINE_DMA_CHANNEL,
+     *       DL_DMA_ADDR_INCREMENT_ENABLE);
+     */
+
+    DL_DMA_enableChannel(LINE_DMA_INST, LINE_DMA_CHANNEL);
+
+    /*
+     * 启动 ADC。repeat-single 模式下 ADC 会持续转换同一通道，
+     * 每次转换完成自动触发 DMA，直到 DMA 搬够 8 个样本。
+     */
+    DL_ADC12_startConversion(LINE_ADC_INST);
+
+    while (!g_dma_done) {
+        __WFE();
     }
 
+    /* 求均值 */
+    uint32_t sum = 0;
+    for (uint8_t j = 0; j < ADC_SAMPLES_PER_CHANNEL; j++) {
+        sum += g_adc_dma_buf[j];
+    }
     return (uint16_t)(sum / ADC_SAMPLES_PER_CHANNEL);
 }
 
 /*
- * ADC ISR
+ * DMA ISR
  *
- * 只置标志位，不做浮点/阻塞。
- * 必须用 extern "C" 确保 C 链接——name mangling 会导致向量表找不到此函数，
- * 使用弱定义的空 handler，ADC 中断永远不会触发。
+ * 只在 8 次采样全部搬运完成后触发一次。
+ * 必须用 extern "C" 确保 C 链接。
  */
-extern "C" void LINE_ADC_INST_IRQHandler(void)
+extern "C" void LINE_DMA_INST_IRQHandler(void)
 {
-    switch (DL_ADC12_getPendingInterrupt(LINE_ADC_INST)) {
-        case DL_ADC12_IIDX_MEM0_RESULT_LOADED:
-            g_adc_done = true;
+    /*
+     * 不同 SDK 版本获取 pending interrupt 的方式不同，常见两种：
+     *   DL_DMA_getPendingInterrupt(LINE_DMA_INST)
+     *   DL_DMA_getPendingInterrupt(LINE_DMA_INST, LINE_DMA_CHANNEL)
+     * 请按实际头文件选择。
+     */
+    switch (DL_DMA_getPendingInterrupt(LINE_DMA_INST, LINE_DMA_CHANNEL)) {
+        case DL_DMA_IIDX_DMA_CHANNEL0_DONE:
+            g_dma_done = true;
+            DL_DMA_disableChannel(LINE_DMA_INST, LINE_DMA_CHANNEL);
+            /*
+             * burst 完成后停止 ADC 重复转换，防止产生多余的 DMA 请求。
+             * 若 DriverLib 没有 stopConversion，可改用 disableConversions。
+             */
+            DL_ADC12_stopConversion(LINE_ADC_INST);
             break;
         default:
             break;

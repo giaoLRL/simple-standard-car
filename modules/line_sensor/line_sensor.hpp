@@ -12,10 +12,11 @@
  * 依赖: ISensorArray（实现接口）、config.hpp（参数 + GPIO 宏）
  *
  * 设计要点:
- *   1. 8 采样均值滤波，降低 ADC 噪声
+ *   1. 8 采样均值滤波，由 DMA burst 一次搬运 8 个样本后求平均
  *   2. 预计算归一化系数（init 时），运行时只做乘法
  *   3. 二值化输出（1:2 / 2:1 灰度阈值），用于快速丢线判断
  *   4. 加权平均线位置：Σ(dark_i × pos_i) / Σ(dark_i)
+ *   5. ADC 配置为 repeat-single-channel，由 DMA 触发搬运
  */
 
 #include "ti_msp_dl_config.h"
@@ -49,8 +50,14 @@ public:
      */
     void init_with_calibration(const uint16_t *white, const uint16_t *black);
 
-    /* 快速白底采样（启动时调用一次，自动填充黑基准）*/
-    void calibrate_white();
+    /*
+     * 按键触发黑白双标定（启动时调用一次）：
+     *   第 1 次按键：采集白底；
+     *   第 2 次按键：采集黑线。
+     * 已废弃原 calibrate_white()，保留同名包装以兼容旧调用。
+     */
+    void calibrate();
+    void calibrate_white() { calibrate(); }
 
     /* 传感器就绪标志（校准完成后为 true）*/
     bool is_ready() const { return ok_; }
@@ -62,8 +69,9 @@ public:
     uint16_t get_normalized_ch(uint8_t i) const { return normal_[i]; }
 
 private:
-    /* 读取单个 ADC 通道（8 次采样取均值）*/
-    uint16_t read_adc_avg_();
+    /* 切换一路 MUX，由 DMA 连续搬运 ADC_SAMPLES_PER_CHANNEL 个样本到 buffer，
+     * 阻塞等待 burst 完成，返回该路均值 */
+    uint16_t read_adc_burst_dma_(uint8_t ch);
 
     /*
      * 成员变量

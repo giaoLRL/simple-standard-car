@@ -22,13 +22,16 @@
  *
  * 已知限制:
  *   1. 纯 P 控制，高速时可能振荡
- *   2. 丢线即停车，不记忆恢复
+ *   2. 丢线即停车并蜂鸣器间歇报警；支持左/右直角弯状态机
  *   3. 无编码器速度闭环
+ *   4. 传感器 ADC 配置为 repeat 模式，由 DMA burst 搬运 8 个样本；API 需按 SDK 版本核对
  */
 
 #include "ti_msp_dl_config.h"
 #include "modules/common/config.hpp"
 #include "modules/common/iinterfaces.hpp"
+#include "modules/common/buzzer.hpp"
+#include "modules/control/turn_state_machine.hpp"
 #include "modules/line_sensor/line_sensor.hpp"
 #include "modules/motor/motor.hpp"
 
@@ -118,7 +121,8 @@ int main(void)
 {
     /* ===== 1. 平台初始化 ===== */
     SYSCFG_DL_init();
-    NVIC_EnableIRQ(LINE_ADC_INST_INT_IRQN);
+    /* 使能 DMA 完成中断（ADC 结果改由 DMA 搬运，不再用 ADC 中断） */
+    NVIC_EnableIRQ(LINE_DMA_INST_INT_IRQN);
 
     /* 确保电机初始停转 */
     g_motor.stop();
@@ -126,9 +130,15 @@ int main(void)
     /* ===== 2. 各模块硬件初始化 ===== */
     g_line_sensor.init();
     g_motor.init();
+    buzzer_init();
+    turn_fsm_init();
 
-    /* ===== 3. 传感器白底标定 + 系数预计算 ===== */
-    g_line_sensor.calibrate_white();
+    /* ===== 3. 传感器黑白双标定 + 系数预计算 ===== */
+    /*
+     * 流程：上电后把 8 路探头全部放到白底，按 PB21 按键；
+     *       再把 8 路探头全部放到黑线，再按一次 PB21 按键。
+     */
+    g_line_sensor.calibrate();
 
     /* ===== 4. 主循环 ===== */
     while (1) {
@@ -144,8 +154,19 @@ int main(void)
         g_dbg_error      = error;
         g_dbg_line_found = line_found;
 
+        /* ---- 直角弯状态机 ---- */
+        uint8_t digital = g_line_sensor.get_digital();
+        turn_fsm_update(digital, line_found);
+
         /* ---- 控制决策 ---- */
-        if (line_found && g_line_track_on && g_motor_on) {
+        if (!g_line_track_on || !g_motor_on) {
+            /* 功能关闭 → 停车 */
+            g_motor.stop();
+            g_dbg_left_cmd  = 0;
+            g_dbg_right_cmd = 0;
+            buzzer_off();
+        } else if (turn_fsm_is_straight()) {
+            /* 正常循迹：P 控制差速 */
             int32_t correction = compute_correction(error);
             int16_t left_cmd, right_cmd;
             apply_diff_steering(
@@ -154,14 +175,32 @@ int main(void)
                 &left_cmd, &right_cmd);
 
             g_motor.set_speed(left_cmd, right_cmd);
+            buzzer_off();
+
+            g_dbg_left_cmd  = left_cmd;
+            g_dbg_right_cmd = right_cmd;
+        } else if (!turn_fsm_is_lost()) {
+            /* 左/右直角弯：使用状态机输出的固定差速 */
+            int16_t left_cmd, right_cmd;
+            turn_fsm_get_motor_commands(&left_cmd, &right_cmd);
+            g_motor.set_speed(left_cmd, right_cmd);
+            buzzer_off();
 
             g_dbg_left_cmd  = left_cmd;
             g_dbg_right_cmd = right_cmd;
         } else {
-            /* 丢线或功能关闭 → 停车 */
+            /* LOST：丢线或转弯超时 → 停车 + 蜂鸣器 1 Hz 间歇报警 */
             g_motor.stop();
             g_dbg_left_cmd  = 0;
             g_dbg_right_cmd = 0;
+
+            static uint32_t buzzer_tick = 0;
+            buzzer_tick++;
+            if ((buzzer_tick / 250U) % 2U == 0U) {
+                buzzer_on();
+            } else {
+                buzzer_off();
+            }
         }
 
         /* ---- 固定周期（2 ms → 500 Hz）---- */

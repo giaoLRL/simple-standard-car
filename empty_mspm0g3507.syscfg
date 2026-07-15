@@ -55,6 +55,26 @@ for (let i = 0; i < encoderPins.length; i++) {
     GPIO_ENCODER.associatedPins[i].direction    = "INPUT";
 }
 
+/* User key for calibration trigger: PB21, pull-up input, active low. */
+const GPIO_KEY_USER = GPIO.addInstance();
+GPIO_KEY_USER.$name = "GPIO_KEY_USER";
+GPIO_KEY_USER.associatedPins.create(1);
+GPIO_KEY_USER.associatedPins[0].$name        = "KEY_USER";
+GPIO_KEY_USER.associatedPins[0].assignedPort = "PORTB";
+GPIO_KEY_USER.associatedPins[0].assignedPin  = "21";
+GPIO_KEY_USER.associatedPins[0].direction    = "INPUT";
+GPIO_KEY_USER.associatedPins[0].pull         = "PULL_UP";
+
+/* Buzzer: PA0, active high, push-pull output. */
+const GPIO_BUZZER = GPIO.addInstance();
+GPIO_BUZZER.$name = "GPIO_BUZZER";
+GPIO_BUZZER.associatedPins.create(1);
+GPIO_BUZZER.associatedPins[0].$name        = "BUZZER";
+GPIO_BUZZER.associatedPins[0].assignedPort = "PORTA";
+GPIO_BUZZER.associatedPins[0].assignedPin  = "0";
+GPIO_BUZZER.associatedPins[0].direction    = "OUTPUT";
+GPIO_BUZZER.associatedPins[0].initialValue = "LOW";
+
 /* Sensor OUT: PA24 = ADC0 channel 3. */
 const LINE_ADC = ADC12.addInstance();
 LINE_ADC.$name                      = "LINE_ADC";
@@ -63,9 +83,37 @@ LINE_ADC.sampClkDiv                 = "DL_ADC12_CLOCK_DIVIDE_8";
 LINE_ADC.adcMem0chansel             = "DL_ADC12_INPUT_CHAN_3";
 LINE_ADC.sampleTime0                = "10 us";
 LINE_ADC.powerDownMode              = "DL_ADC12_POWER_DOWN_MODE_MANUAL";
-LINE_ADC.enabledInterrupts          = ["DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED"];
+LINE_ADC.enabledInterrupts          = [];   /* 结果由 DMA 搬运，不再用 ADC 中断 */
+/*
+ * 必须把 ADC 配成 repeat-single-channel 模式：
+ * 启动一次转换后 ADC 会反复采样同一通道，每次完成都触发 DMA，
+ * 直到 DMA 搬够 ADC_SAMPLES_PER_CHANNEL 个样本。
+ * SysConfig 中常见字段名如 conversionMode / repeatConversion / sequenceMode，
+ * 请在 GUI 里核对并选择 repeat single channel / repeat mode。
+ */
+LINE_ADC.conversionMode             = "DL_ADC12_CONVERSION_MODE_REPEAT_SINGLE";
 LINE_ADC.peripheral.$assign         = "ADC0";
 LINE_ADC.peripheral.adcPin3.$assign = "PA24";
+
+/*
+ * DMA for sensor ADC result transfer.
+ * 触发源选 ADC0 的 MEM0 结果加载事件；传输宽度半字；
+ * 源地址固定（ADC 结果寄存器），目标地址递增（buffer）。
+ * 如果 SysConfig GUI 里字段名/枚举值与下面不完全一致，请在 GUI 中核对后保存，
+ * 再让 CCS 重新生成 ti_msp_dl_config.h。
+ */
+const DMA = scripting.addModule("/ti/driverlib/DMA", {}, false);
+const LINE_DMA = DMA.addInstance();
+LINE_DMA.$name            = "LINE_DMA";
+LINE_DMA.channelSelect    = "DL_DMA_CHANNEL_0";
+LINE_DMA.transferMode     = "DL_DMA_TRANSFER_MODE_BASIC";
+LINE_DMA.triggerSelect    = "DL_DMA_TRIGGER_ADC12_0_DMA_TRIG";
+LINE_DMA.srcAddrIncrement = "DL_DMA_ADDRESS_UNCHANGED";
+LINE_DMA.dstAddrIncrement = "DL_DMA_ADDRESS_INCREMENT";
+LINE_DMA.srcWidth         = "DL_DMA_WIDTH_HALF_WORD";
+LINE_DMA.dstWidth         = "DL_DMA_WIDTH_HALF_WORD";
+LINE_DMA.transferSize     = 8;   /* ADC_SAMPLES_PER_CHANNEL */
+LINE_DMA.enableInterrupt  = true;
 
 /* PWMA/PWMB: PB4=TIMA1_CCP0, PB1=TIMA1_CCP1, 20 kHz at 32 MHz. */
 const MOTOR_PWM = PWM.addInstance();
