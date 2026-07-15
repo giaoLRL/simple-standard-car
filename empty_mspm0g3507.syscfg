@@ -1,0 +1,83 @@
+/**
+ * MSPM0G3507 pin configuration for a two-motor, eight-channel line follower.
+ */
+//@cliArgs --device "MSPM0G350X" --package "LQFP-64(PM)" --part "Default"
+//@v2CliArgs --device "MSPM0G3507" --package "LQFP-64(PM)"
+
+const Board         = scripting.addModule("/ti/driverlib/Board", {}, false);
+const SYSCTL        = scripting.addModule("/ti/driverlib/SYSCTL");
+const ProjectConfig = scripting.addModule("/ti/project_config/ProjectConfig");
+const GPIO          = scripting.addModule("/ti/driverlib/GPIO", {}, false);
+const ADC12         = scripting.addModule("/ti/driverlib/ADC12", {}, false);
+const PWM           = scripting.addModule("/ti/driverlib/PWM", {}, false);
+
+ProjectConfig.deviceSpin = "MSPM0G3507";
+SYSCTL.forceDefaultClkConfig = true;
+
+/* Motor direction outputs and CD4051 address outputs. */
+const GPIO_OUT = GPIO.addInstance();
+GPIO_OUT.$name = "GPIO_OUT";
+GPIO_OUT.associatedPins.create(7);
+
+const outputPins = [
+    ["AIN1", "PORTA", "13"],
+    ["AIN2", "PORTA", "12"],
+    ["BIN1", "PORTB", "0"],
+    ["BIN2", "PORTB", "8"],
+    ["LINE_AD2", "PORTB", "24"],
+    ["LINE_AD1", "PORTB", "25"],
+    ["LINE_AD0", "PORTB", "20"],
+];
+
+for (let i = 0; i < outputPins.length; i++) {
+    GPIO_OUT.associatedPins[i].$name        = outputPins[i][0];
+    GPIO_OUT.associatedPins[i].assignedPort = outputPins[i][1];
+    GPIO_OUT.associatedPins[i].assignedPin  = outputPins[i][2];
+    GPIO_OUT.associatedPins[i].initialValue = "CLEARED";
+}
+
+/* Encoder inputs are reserved for later speed closed-loop control. */
+const GPIO_ENCODER = GPIO.addInstance();
+GPIO_ENCODER.$name = "GPIO_ENCODER";
+GPIO_ENCODER.associatedPins.create(4);
+
+const encoderPins = [
+    ["E1A", "PORTA", "15"],
+    ["E1B", "PORTA", "16"],
+    ["E2A", "PORTA", "17"],
+    ["E2B", "PORTB", "9"],
+];
+
+for (let i = 0; i < encoderPins.length; i++) {
+    GPIO_ENCODER.associatedPins[i].$name        = encoderPins[i][0];
+    GPIO_ENCODER.associatedPins[i].assignedPort = encoderPins[i][1];
+    GPIO_ENCODER.associatedPins[i].assignedPin  = encoderPins[i][2];
+    GPIO_ENCODER.associatedPins[i].direction    = "INPUT";
+}
+
+/* Sensor OUT: PA24 = ADC0 channel 3. */
+const LINE_ADC = ADC12.addInstance();
+LINE_ADC.$name                      = "LINE_ADC";
+LINE_ADC.sampClkSrc                 = "DL_ADC12_CLOCK_ULPCLK";
+LINE_ADC.sampClkDiv                 = "DL_ADC12_CLOCK_DIVIDE_8";
+LINE_ADC.adcMem0chansel             = "DL_ADC12_INPUT_CHAN_3";
+LINE_ADC.sampleTime0                = "10 us";
+LINE_ADC.powerDownMode              = "DL_ADC12_POWER_DOWN_MODE_MANUAL";
+LINE_ADC.enabledInterrupts          = ["DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED"];
+LINE_ADC.peripheral.$assign         = "ADC0";
+LINE_ADC.peripheral.adcPin3.$assign = "PA24";
+
+/* PWMA/PWMB: PB4=TIMA1_CCP0, PB1=TIMA1_CCP1, 20 kHz at 32 MHz. */
+const MOTOR_PWM = PWM.addInstance();
+MOTOR_PWM.$name                      = "MOTOR_PWM";
+MOTOR_PWM.ccIndex                    = [0, 1];
+MOTOR_PWM.timerCount                 = 1600;
+MOTOR_PWM.timerStartTimer            = true;
+MOTOR_PWM.enableShadowLoad           = true;
+MOTOR_PWM.peripheral.$assign         = "TIMA1";
+MOTOR_PWM.peripheral.ccp0Pin.$assign = "PB4";
+MOTOR_PWM.peripheral.ccp1Pin.$assign = "PB1";
+MOTOR_PWM.PWM_CHANNEL_0.$name        = "PWMA";
+MOTOR_PWM.PWM_CHANNEL_0.dutyCycle    = 0;
+MOTOR_PWM.PWM_CHANNEL_1.$name        = "PWMB";
+MOTOR_PWM.PWM_CHANNEL_1.dutyCycle    = 0;
