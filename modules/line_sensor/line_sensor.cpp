@@ -113,9 +113,13 @@ void LineSensor::init_with_calibration(const uint16_t *white,
 
 static void wait_key_press_()
 {
-    /* 按键接地，上拉输入：未按下为高电平，按下为低电平 */
+    /*
+     * 按键接地，上拉输入：未按下为高电平，按下为低电平。
+     * 注意：此处不能用 __WFE()，因为 PB21 没有配置中断/事件；
+     *       一旦进入 WFE 且无线程事件，CPU 会永久睡眠。
+     */
     while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) != 0) {
-        __WFE();  /* 等待，降低功耗 */
+        __NOP();
     }
 
     /* 消抖：等待约 20 ms */
@@ -123,7 +127,7 @@ static void wait_key_press_()
 
     /* 等待释放 */
     while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) == 0) {
-        __WFE();
+        __NOP();
     }
 
     delay_cycles(20U * 32000U);
@@ -322,8 +326,13 @@ uint16_t LineSensor::read_adc_burst_dma_(uint8_t ch)
      */
     DL_ADC12_startConversion(LINE_ADC_INST);
 
+    /*
+     * 等待 DMA 完成。原本用 __WFE()，但若 DMA 中断未正确配置会永久睡眠；
+     * 改为轮询更保险，DMA ISR 会在完成后把 g_dma_done 置 true。
+     * 功耗略有增加，但可避免硬死机。
+     */
     while (!g_dma_done) {
-        __WFE();
+        __NOP();
     }
 
     /* 求均值 */
