@@ -20,6 +20,6 @@ void buzzer_off(void)
 void buzzer_beep(uint32_t ms)
 {
     buzzer_on();
-    delay_cycles(ms * 32000U);
+    delay_cycles(ms * (CPUCLK_FREQ / 1000U));
     buzzer_off();
 }

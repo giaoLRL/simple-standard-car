@@ -71,7 +71,7 @@ public:
 private:
     /* 切换一路 MUX，由 DMA 连续搬运 ADC_SAMPLES_PER_CHANNEL 个样本到 buffer，
      * 阻塞等待 burst 完成，返回该路均值 */
-    uint16_t read_adc_burst_dma_(uint8_t ch);
+    bool read_adc_burst_dma_(uint8_t ch, uint16_t *result);
 
     /*
      * 成员变量

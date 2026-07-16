@@ -50,6 +50,8 @@ private:
 
     int16_t left_command_;
     int16_t right_command_;
+    bool    left_was_forward_{true};   /* 上一帧左电机方向 (用于死区检测) */
+    bool    right_was_forward_{true};  /* 上一帧右电机方向 (用于死区检测) */
 };
 
 extern MotorDriver g_motor;   /* 全局单例 */

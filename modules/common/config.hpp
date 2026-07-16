@@ -16,7 +16,7 @@
  * ============================================================ */
 
 #define ADC_RESOLUTION_BITS   (12U)    /* ADC 分辨率: 8/10/12/14 */
-#define ADC_MAX_VALUE         (4096U)  /* 2^12 = 4096（与分辨率对应）*/
+#define ADC_MAX_VALUE         (4095U)  /* 12 位 ADC 最大码值 = 2^12 - 1 = 4095 */
 
 /* ============================================================
  *  传感器配置
@@ -24,16 +24,17 @@
 
 #define SENSOR_COUNT              (8U) /* 循迹传感器数量 */
 #define ADC_SAMPLES_PER_CHANNEL   (8U) /* 每通道 ADC 采样次数（均值滤波）*/
-#define MUX_SETTLE_US             (1U) /* 模拟开关切换后稳定等待（µs）*/
 
 /* 传感器物理位置（×1000 避免浮点），对称分布，左负右正 */
 static const int16_t g_sensor_position[SENSOR_COUNT] = {
     -3500, -2500, -1500, -500, 500, 1500, 2500, 3500
 };
 
-/* 自动标定参数 */
-#define WHITE_STARTUP_SCANS       (20U) /* 启动时快速白底采样次数 */
-#define INITIAL_BLACK_SPAN        (120U)/* 初始黑线跨度（ADC 原始值）*/
+/* 标定参数。手册规定正常状态必须白大黑小。 */
+#define WHITE_STARTUP_SCANS       (50U) /* 启动时快速白底采样次数 */
+#define MIN_CALIBRATION_SPAN      (120U)/* 每路最小有效黑白跨度 */
+#define MAX_CALIBRATION_RETRIES   (10U) /* 最大标定重试次数 (防硬件故障永久阻塞) */
+#define ADC_DMA_TIMEOUT_LOOPS  (1600U) /* DMA 超时轮询次数 (~300 µs @32 MHz, 8 次 ADC 采样 ≈ 8 µs + 余量) */
 
 /* ============================================================
  *  GPIO 地址切换宏（CD4051 模拟开关）
@@ -71,36 +72,32 @@ static const int16_t g_sensor_position[SENSOR_COUNT] = {
 #define LEFT_MOTOR_REVERSED       (0)
 #define RIGHT_MOTOR_REVERSED      (0)
 
+/* H 桥方向切换死区延时 (NOP 循环数, ~2 µs @32 MHz) */
+#define HBRIDGE_DEADTIME_LOOPS    (64U)
+
 /* ============================================================
  *  控制参数
  * ============================================================ */
 
-#define BASE_SPEED                (450)   /* 基础速度（PWM 占空比）*/
+#define BASE_SPEED                (200)   /* 基础速度（PWM 占空比, 40% 远离电机死区 10-15%）*/
 #define LINE_PRESENT_MIN          (300U)  /* 归一化暗度总和低于此值视为丢线 */
 
-/* PID 参数（此处只用 P 项，I/D 预留为 0 以便后续扩展）*/
-extern float g_pid_kp;
-extern float g_pid_ki;
-extern float g_pid_kd;
-
-/* 运行时通过宏重定向，方便外部（串口/蓝牙）修改参数 */
-#define PID_KP g_pid_kp
-#define PID_KI g_pid_ki
-#define PID_KD g_pid_kd
+/* PID 参数（通过 g_pid 对象直接访问: g_pid.kp, g_pid.ki, g_pid.kd）*/
 
 /* ============================================================
  *  直角弯状态机参数
  * ============================================================ */
 
-#define TURN_OUTER_SPEED   (150)   /* 转弯外轮速度（正值：低速前进） */
-#define TURN_INNER_SPEED   (-100)  /* 转弯内轮速度（负值：轻微反转） */
-#define TURN_TIMEOUT_MS    (1000)  /* 转弯最大允许时间，超时判丢线 */
+#define TURN_OUTER_SPEED   (170)   /* 转弯外轮速度 */
+#define TURN_INNER_SPEED   (80)    /* 转弯内轮速度（正值：同向慢转，差速转弯）*/
+#define TURN_TIMEOUT_MS    (2000)  /* 转弯最大允许时间，超时判丢线 */
+#define TURN_ADVANCE_MS    (50)   /* 转弯前直走延时，让车身前进到转弯点 */
 
 /* ============================================================
  *  时序配置
  * ============================================================ */
 
-#define CONTROL_PERIOD_MS         (2U)     /* 主循环周期（ms）*/
+#define CONTROL_PERIOD_MS         (10U)    /* 主循环周期（ms, 100Hz 匹配电机 τm≈20-100ms）*/
 
 /* ============================================================
  *  编译期特性开关
@@ -122,7 +119,7 @@ extern float g_pid_kd;
  * ============================================================ */
 
 #define BUZZER_PORT  GPIOA
-#define BUZZER_PIN   DL_GPIO_PIN_0
+#define BUZZER_PIN   DL_GPIO_PIN_2
 
 /* ============================================================
  *  运行时特性开关
