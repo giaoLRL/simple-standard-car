@@ -119,18 +119,46 @@ void proto_send_telemetry(void)
     tlm_seq &= 0xFFFF;
 }
 
+static int parse_value(const char *s)
+{
+    if (strchr(s, '.')) {
+        float f = (float)atof(s);
+        return (int)(f * 1000.0f);
+    }
+    return atoi(s);
+}
+
+static bool cmd_is(const char *cmd, int cmd_len, const char *expect)
+{
+    int elen = (int)strlen(expect);
+    if (cmd_len != elen) return false;
+    for (int i = 0; i < elen; i++) {
+        char c = cmd[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c != expect[i]) return false;
+    }
+    return true;
+}
+
 static void parse_and_apply(const char *cmd, int len)
 {
     const char *eq = (const char *)memchr(cmd, '=', (size_t)len);
     if (!eq) {
-        if (len == 3 && memcmp(cmd, "STP", 3) == 0) {
+        if (cmd_is(cmd, len, "STOP")) {
+            g_motor_on = false;
+            g_pid.reset();
+        } else if (cmd_is(cmd, len, "GO")) {
+            g_motor_on = true;
+            g_line_track_on = true;
+            g_pid.reset();
+        } else if (cmd_is(cmd, len, "STP")) {
             g_motor_on = !g_motor_on;
-        } else if (len == 3 && memcmp(cmd, "RUN", 3) == 0) {
+        } else if (cmd_is(cmd, len, "RUN")) {
             g_line_track_on = !g_line_track_on;
-        } else if (len == 3 && memcmp(cmd, "CAL", 3) == 0) {
-        } else if (len == 5 && memcmp(cmd, "HELLO", 5) == 0) {
+        } else if (cmd_is(cmd, len, "CAL")) {
+        } else if (cmd_is(cmd, len, "HELLO")) {
             proto_send_hello();
-        } else if (len == 3 && memcmp(cmd, "RST", 3) == 0) {
+        } else if (cmd_is(cmd, len, "RST")) {
             g_pid.kp = 0.05f;
             g_pid.ki = 0.0000f;
             g_pid.kd = 0.13f;
@@ -144,23 +172,23 @@ static void parse_and_apply(const char *cmd, int len)
 
     int key_len = (int)(eq - cmd);
     const char *val_str = eq + 1;
-    int val_int = atoi(val_str);
+    int val_int = parse_value(val_str);
 
-    if (key_len == 2 && memcmp(cmd, "KP", 2) == 0) {
+    if (cmd_is(cmd, key_len, "KP")) {
         g_pid.kp = (float)val_int / 1000.0f;
-    } else if (key_len == 2 && memcmp(cmd, "KI", 2) == 0) {
+    } else if (cmd_is(cmd, key_len, "KI")) {
         g_pid.ki = (float)val_int / 1000.0f;
-    } else if (key_len == 2 && memcmp(cmd, "KD", 2) == 0) {
+    } else if (cmd_is(cmd, key_len, "KD")) {
         g_pid.kd = (float)val_int / 1000.0f;
-    } else if (key_len == 3 && memcmp(cmd, "BSP", 3) == 0) {
+    } else if (cmd_is(cmd, key_len, "BSP")) {
         if (val_int >= 0 && val_int <= (int)PWM_MAX) g_base_speed = (uint16_t)val_int;
-    } else if (key_len == 3 && memcmp(cmd, "TOS", 3) == 0) {
+    } else if (cmd_is(cmd, key_len, "TOS")) {
         if (val_int >= 0 && val_int <= (int)PWM_MAX) g_turn_outer_speed = (uint16_t)val_int;
-    } else if (key_len == 3 && memcmp(cmd, "TIS", 3) == 0) {
+    } else if (cmd_is(cmd, key_len, "TIS")) {
         if (val_int >= 0 && val_int <= (int)PWM_MAX) g_turn_inner_speed = (uint16_t)val_int;
-    } else if (key_len == 3 && memcmp(cmd, "LTO", 3) == 0) {
+    } else if (cmd_is(cmd, key_len, "LTO")) {
         g_line_track_on = (val_int != 0);
-    } else if (key_len == 3 && memcmp(cmd, "MTO", 3) == 0) {
+    } else if (cmd_is(cmd, key_len, "MTO")) {
         g_motor_on = (val_int != 0);
     }
 }

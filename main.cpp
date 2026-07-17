@@ -183,7 +183,17 @@ int main(void)
         g_dbg_error      = error;
         g_dbg_line_found = line_found;
 
-        proto_send_telemetry();
+        /* 遥测发送频率控制: 每帧 ~150 字节 @ 9600 baud ≈ 150ms,
+         * 阻塞期间无控制，频率过高会导致小车失控。
+         * 改为每 500ms 发一次，给控制循环留 350ms 连续运行窗口。 */
+        {
+            static uint32_t next_tlm_ms = 500;
+            uint32_t now = timebase_millis();
+            if ((int32_t)(now - next_tlm_ms) >= 0) {
+                next_tlm_ms = now + 500;
+                proto_send_telemetry();
+            }
+        }
         proto_poll_commands();
 
         /* ---- 直角弯状态机 ---- */

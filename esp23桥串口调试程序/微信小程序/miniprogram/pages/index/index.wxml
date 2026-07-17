@@ -38,6 +38,8 @@
       </view>
     </view>
 
+    <button wx:if="{{panels.length}}" class="send-all-button {{changed?'highlight':''}}" bindtap="sendAll">{{changed ? '● 发送全部参数' : '发送全部参数'}}</button>
+
     <view class="control-panel" wx:if="{{hasEncoder}}">
       <text class="panel-title">编码器校准</text>
       <view class="calibration-row">

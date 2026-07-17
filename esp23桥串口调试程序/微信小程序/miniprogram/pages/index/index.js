@@ -8,9 +8,9 @@ function generatePanels(uiConfig) {
 
   if (params.kp !== undefined || params.ki !== undefined || params.kd !== undefined) {
     const controls = [];
-    if (params.kp !== undefined) controls.push({ key: 'kp', name: 'Kp', min: 0, max: 1, step: 0.01, value: params.kp });
-    if (params.ki !== undefined) controls.push({ key: 'ki', name: 'Ki', min: 0, max: 0.1, step: 0.001, value: params.ki });
-    if (params.kd !== undefined) controls.push({ key: 'kd', name: 'Kd', min: 0, max: 0.5, step: 0.01, value: params.kd });
+    if (params.kp !== undefined) controls.push({ key: 'kp', name: 'Kp', min: 0, max: 1, step: 0.01, value: params.kp / 1000 });
+    if (params.ki !== undefined) controls.push({ key: 'ki', name: 'Ki', min: 0, max: 0.1, step: 0.001, value: params.ki / 1000 });
+    if (params.kd !== undefined) controls.push({ key: 'kd', name: 'Kd', min: 0, max: 0.5, step: 0.01, value: params.kd / 1000 });
     if (params.outputMax !== undefined) controls.push({ key: 'outputMax', name: '输出限幅', min: 50, max: pwmMax, step: 10, value: params.outputMax });
     if (controls.length) panels.push({ id: 'pid', name: '循迹 PID', controls });
   }
@@ -49,7 +49,7 @@ Page({
   data: {
     connected: false, connecting: false, deviceName: '', activePanel: '',
     debug: {}, currentMode: 'POS', stopped: false,
-    panels: [], panelNames: [],
+    panels: [], panelNames: [], changed: false,
     config: { wheelMm: 0, encoderPpr: 0 },
     hasEncoder: false, hasGyro: false, canConfig: false, canCalibrate: false,
     helloReceived: false
@@ -57,22 +57,28 @@ Page({
 
   onShow() {
     if (this.unsubscribe) return;
+    this.lastMode = '';
     this.unsubscribe = telemetry.subscribe(function (state) {
       var debug = state.debug;
       var uiConfig = telemetry.getUiConfig();
-      var panels = generatePanels(uiConfig);
-      var panelNames = panels.map(function (p) { return { id: p.id, name: p.name }; });
+      var curMode = telemetry.connectionMode;
       var activePanel = this.data.activePanel;
-      if (!activePanel && panels.length) activePanel = panels[0].id;
+
+      if (curMode !== this.lastMode || !this.data.panels.length) {
+        this.lastMode = curMode;
+        var panels = generatePanels(uiConfig);
+        var panelNames = panels.map(function (p) { return { id: p.id, name: p.name }; });
+        if (!activePanel && panels.length) activePanel = panels[0].id;
+        this.setData({ panels: panels, panelNames: panelNames, activePanel: activePanel, changed: false });
+      }
 
       this.setData({
         connected: state.connected, connecting: state.connecting, deviceName: state.deviceName,
         debug: debug, currentMode: debug.mode || 'POS', stopped: debug.stopped || false,
-        panels: panels, panelNames: panelNames, activePanel: activePanel,
         config: state.config,
         hasEncoder: uiConfig.hasEncoder, hasGyro: uiConfig.hasGyro,
         canConfig: uiConfig.canConfig, canCalibrate: uiConfig.canCalibrate,
-        helloReceived: telemetry.connectionMode === 'v3_adaptive'
+        helloReceived: curMode === 'v3_adaptive'
       });
     }.bind(this));
   },
@@ -83,14 +89,16 @@ Page({
   connectBLE() { telemetry.connect(); },
   selectPanel(e) { this.setData({ activePanel: e.currentTarget.dataset.panel }); },
 
-  sendStop() { telemetry.sendCmd(this.data.stopped ? 'GO' : 'STOP'); },
+  sendStop() {
+    telemetry.sendCmd(this.data.stopped ? 'GO' : 'STOP');
+    this.setData({ stopped: !this.data.stopped });
+  },
   sendCalibrate() { telemetry.sendCmd('CAL'); },
   sendReset() { telemetry.sendCmd('RST'); },
 
   onParamSlider(e) {
     var key = e.currentTarget.dataset.key;
     var value = e.detail.value;
-    telemetry.sendThrottle('slider_' + key, key + '=' + value);
     var panels = this.data.panels.slice();
     for (var pi = 0; pi < panels.length; pi++) {
       var controls = panels[pi].controls;
@@ -101,13 +109,12 @@ Page({
         }
       }
     }
-    this.setData({ panels: panels });
+    this.setData({ panels: panels, changed: true });
   },
 
   onParamChanged(e) {
     var key = e.currentTarget.dataset.key;
     var value = e.detail.value;
-    telemetry.sendCmd(key + '=' + value);
     var panels = this.data.panels.slice();
     for (var pi = 0; pi < panels.length; pi++) {
       var controls = panels[pi].controls;
@@ -118,7 +125,20 @@ Page({
         }
       }
     }
-    this.setData({ panels: panels });
+    this.setData({ panels: panels, changed: true });
+  },
+
+  sendAll() {
+    var panels = this.data.panels;
+    for (var pi = 0; pi < panels.length; pi++) {
+      var controls = panels[pi].controls;
+      for (var ci = 0; ci < controls.length; ci++) {
+        var ctrl = controls[ci];
+        telemetry.sendParam(ctrl.key, ctrl.value);
+      }
+    }
+    this.setData({ changed: false });
+    wx.showToast({ title: '参数已发送', icon: 'success', duration: 1000 });
   },
 
   onWheelMm(e) {

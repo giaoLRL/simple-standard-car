@@ -20,3 +20,5 @@ slider { margin:4px 0 0; }
 .calibration-row input { height:36px; margin-top:5px; padding:0 8px; border:1px solid #cfd4d9; border-radius:4px; color:#1f242a; background:#fafafa; }
 .help-text { display:flex; flex-direction:column; gap:6px; }
 .help-text text { color:#68717b; font-size:12px; line-height:1.6; }
+.send-all-button { width:100%; margin:8px 0 12px; padding:12px 0; color:#fff; background:#303740; font-size:15px; border-radius:6px; }
+.send-all-button.highlight { background:#007f82; }

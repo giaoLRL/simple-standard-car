@@ -35,7 +35,7 @@ function defaultDebugLegacy() {
 }
 
 function defaultDebugV3() {
-  return { protocol: 3, receivedAt: 0 };
+  return { protocol: 3, receivedAt: 0, mode: '循迹', stateName: '', stopped: false };
 }
 
 const LEGACY_STATES = ['直道', '入弯', '弯中', '出弯', '丢线', '保留', '直角弯', '十字'];
@@ -422,19 +422,18 @@ class TelemetryService {
     if (debug.state !== undefined && this.hello.states) {
       debug.stateName = this.hello.states[debug.state] || ('状态' + debug.state);
     }
-    if (debug.flags !== undefined && this.hello.caps !== undefined) {
-      debug.mode = this.deriveModeV3(debug.flags, debug.caps);
+    if (debug.flags !== undefined) {
+      debug.stopped = !!(debug.flags & 4);
+      if (debug.flags & 4) {
+        debug.mode = '停车';
+      } else if (debug.flags & 2) {
+        debug.mode = '手动';
+      } else {
+        debug.mode = '循迹';
+      }
     }
 
     this.acceptPacket(debug);
-  }
-
-  deriveModeV3(flags, caps) {
-    if (!caps || !flags) return 'POS';
-    if ((flags & 4) && (caps & 4)) return 'DYC';
-    if ((flags & 2) && (caps & 2)) return 'GYRO';
-    if ((flags & 1) && (caps & 1)) return 'SPEED';
-    return 'POS';
   }
 
   parseV2(line) {
