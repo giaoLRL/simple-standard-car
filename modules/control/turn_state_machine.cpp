@@ -157,13 +157,13 @@ void turn_fsm_get_motor_commands(int16_t *left, int16_t *right)
 {
     switch (s_turn_state) {
         case TurnState::TURN_LEFT:
-            *left  = TURN_INNER_SPEED;
-            *right = TURN_OUTER_SPEED;
+            *left  = (int16_t)g_turn_inner_speed;
+            *right = (int16_t)g_turn_outer_speed;
             break;
 
         case TurnState::TURN_RIGHT:
-            *left  = TURN_OUTER_SPEED;
-            *right = TURN_INNER_SPEED;
+            *left  = (int16_t)g_turn_outer_speed;
+            *right = (int16_t)g_turn_inner_speed;
             break;
 
         case TurnState::STRAIGHT:

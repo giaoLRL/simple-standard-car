@@ -1,0 +1,60 @@
+<view class="page-shell">
+  <view class="connection-bar">
+    <view class="connection-dot {{connected ? 'online' : ''}}"></view>
+    <view class="connection-copy">
+      <text class="connection-title">{{connected ? deviceName : '小车未连接'}}</text>
+      <text class="connection-detail">{{connected ? (helloReceived ? '协议 V3 · 自适应' : '协议 V' + debug.protocol + ' · ' + debug.stateName) : 'BLE UART'}}</text>
+    </view>
+    <button class="compact-button" bindtap="connectBLE">{{connecting ? '扫描中' : (connected ? '断开' : '连接')}}</button>
+  </view>
+
+  <scroll-view scroll-y class="page-scroll">
+    <view class="mode-section" wx:if="{{helloReceived || debug.protocol >= 2}}">
+      <view class="section-heading">
+        <text class="section-title">运行控制</text>
+        <text class="status-tag">{{currentMode}}</text>
+      </view>
+      <view class="safety-row">
+        <text>紧急停车</text>
+        <switch color="#d64545" checked="{{stopped}}" bindchange="sendStop"/>
+      </view>
+      <view class="action-row" wx:if="{{canCalibrate}}">
+        <button class="action-button" bindtap="sendCalibrate">触发标定</button>
+        <button class="action-button danger" bindtap="sendReset">恢复默认</button>
+      </view>
+    </view>
+
+    <view class="panel-tabs" wx:if="{{panels.length > 1}}">
+      <button wx:for="{{panelNames}}" wx:key="id" class="panel-tab {{activePanel==item.id?'active':''}}" data-panel="{{item.id}}" bindtap="selectPanel">{{item.name}}</button>
+    </view>
+
+    <view wx:for="{{panels}}" wx:key="id" wx:if="{{activePanel == item.id || panels.length == 1}}">
+      <view class="control-panel">
+        <text class="panel-title">{{item.name}}</text>
+        <view class="parameter" wx:for="{{item.controls}}" wx:key="key" wx:for-item="ctrl">
+          <view class="parameter-head"><text>{{ctrl.name}}</text><text class="parameter-value">{{ctrl.value}}</text></view>
+          <slider min="{{ctrl.min}}" max="{{ctrl.max}}" step="{{ctrl.step}}" value="{{ctrl.value}}" data-key="{{ctrl.key}}" bindchanging="onParamSlider" bindchange="onParamChanged"/>
+        </view>
+      </view>
+    </view>
+
+    <view class="control-panel" wx:if="{{hasEncoder}}">
+      <text class="panel-title">编码器校准</text>
+      <view class="calibration-row">
+        <label><text>车轮直径 mm</text><input type="digit" value="{{config.wheelMm}}" bindblur="onWheelMm"/></label>
+        <label><text>编码器计数/圈</text><input type="number" value="{{config.encoderPpr}}" bindblur="onEncoderPpr"/></label>
+      </view>
+    </view>
+
+    <view class="control-panel" wx:if="{{!connected}}">
+      <text class="panel-title">连接说明</text>
+      <view class="help-text">
+        <text>1. 确保小车已上电，JDY-23 BLE 模块在工作</text>
+        <text>2. 小车固件需实现 V3 协议（发送 $HELLO 握手帧）或 V2/V1 协议</text>
+        <text>3. V3 协议下，控制面板将根据小车能力自动生成</text>
+      </view>
+    </view>
+
+    <view class="bottom-space"></view>
+  </scroll-view>
+</view>

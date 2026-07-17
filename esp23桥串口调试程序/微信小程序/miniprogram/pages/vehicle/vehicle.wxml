@@ -1,0 +1,68 @@
+<view class="page-shell">
+  <view class="connection-bar">
+    <view class="connection-dot {{connected ? 'online' : ''}}"></view>
+    <view class="connection-copy"><text class="connection-title">{{connected ? deviceName : '小车未连接'}}</text><text class="connection-detail">{{debug.mode}} · {{debug.stateName}}</text></view>
+    <button class="compact-button" bindtap="connectBLE">{{connecting ? '扫描中' : (connected ? '断开' : '连接')}}</button>
+  </view>
+  <scroll-view scroll-y class="page-scroll">
+    <view class="overview-strip">
+      <view><text class="strip-label">车速</text><text class="strip-value">{{speedText}}</text></view>
+      <view><text class="strip-label">位置</text><text class="strip-value">{{debug.pos}}</text></view>
+      <view wx:if="{{hasGyro}}"><text class="strip-label">航向</text><text class="strip-value">{{debug.angleZ || debug.angle}}°</text></view>
+      <view><text class="strip-label">状态</text><text class="strip-value">{{debug.stateName}}</text></view>
+    </view>
+
+    <view class="vehicle-stage">
+      <view class="wheel-column">
+        <view wx:for="{{wheels}}" wx:key="label" wx:if="{{index < motorCount / 2}}" class="wheel {{item.level}}">
+          <view class="power-fill" style="height:{{item.power}}%"></view>
+          <text class="wheel-name">{{item.label}}</text>
+          <text class="wheel-pwm">{{item.pwm}}</text>
+          <text class="wheel-encoder" wx:if="{{hasEncoder}}">ENC {{item.enc}}</text>
+        </view>
+      </view>
+
+      <view class="car-body">
+        <view class="front-mark">前</view>
+        <view wx:if="{{hasGyro}}" class="heading-arrow" style="{{headingStyle}}">
+          <view class="arrow-head"></view><view class="arrow-shaft"></view>
+        </view>
+        <view wx:else class="car-standalone">
+          <text class="car-mode">{{debug.mode}}</text>
+          <text class="car-state">{{debug.stateName}}</text>
+        </view>
+        <view wx:if="{{hasGyro}}" class="car-mode-wrap">
+          <text class="car-mode">{{debug.mode}}</text>
+          <text class="car-state">{{debug.stateName}}</text>
+        </view>
+        <view wx:if="{{hasSensor}}" class="sensor-array">
+          <view wx:for="{{sensors}}" wx:key="name" class="sensor {{item.center?'center':''}} {{item.active?'active':''}}">{{item.name}}</view>
+        </view>
+      </view>
+
+      <view class="wheel-column">
+        <view wx:for="{{wheels}}" wx:key="label" wx:if="{{index >= motorCount / 2}}" class="wheel {{item.level}}">
+          <view class="power-fill" style="height:{{item.power}}%"></view>
+          <text class="wheel-name">{{item.label}}</text>
+          <text class="wheel-pwm">{{item.pwm}}</text>
+          <text class="wheel-encoder" wx:if="{{hasEncoder}}">ENC {{item.enc}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="legend">
+      <view><view class="dot low"></view><text>低</text></view>
+      <view><view class="dot medium"></view><text>中</text></view>
+      <view><view class="dot high"></view><text>高</text></view>
+      <view><view class="dot reverse"></view><text>反转</text></view>
+    </view>
+
+    <view class="detail-band" wx:if="{{detailItems.length}}">
+      <view wx:for="{{detailItems}}" wx:key="label">
+        <text>{{item.label}}</text>
+        <text class="detail-value">{{item.value}}</text>
+      </view>
+    </view>
+    <view class="bottom-space"></view>
+  </scroll-view>
+</view>

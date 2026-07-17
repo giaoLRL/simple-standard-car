@@ -1,0 +1,41 @@
+<view class="page-shell">
+  <view class="connection-bar">
+    <view class="connection-dot {{connected ? 'online' : ''}}"></view>
+    <view class="connection-copy"><text class="connection-title">{{connected ? deviceName : '小车未连接'}}</text><text class="connection-detail">本地持久记录</text></view>
+    <button class="compact-button" bindtap="connectBLE">{{connecting ? '扫描中' : (connected ? '断开' : '连接')}}</button>
+  </view>
+  <scroll-view scroll-y class="page-scroll">
+    <view class="record-header {{recording?'active':''}}">
+      <view class="record-indicator"></view>
+      <view class="record-copy"><text class="record-title">{{recording ? '正在记录' : '记录已停止'}}</text><text class="record-time">{{duration}}</text></view>
+      <button class="record-button" bindtap="toggleRecording">{{recording ? '停止' : '开始'}}</button>
+    </view>
+
+    <view class="record-stats">
+      <view><text>样本</text><text class="stat-value">{{count}}</text></view>
+      <view><text>开始</text><text class="stat-value">{{startedAt}}</text></view>
+      <view><text>占用</text><text class="stat-value">{{storageText}}</text></view>
+      <view><text>丢包</text><text class="stat-value {{droppedPackets?'alert':''}}">{{droppedPackets}}</text></view>
+    </view>
+
+    <view class="record-actions">
+      <button class="export-button" bindtap="exportRecords" disabled="{{count==0}}">导出 CSV</button>
+      <button class="clear-button" bindtap="clearRecords" disabled="{{count==0}}">清除</button>
+    </view>
+
+    <view class="log-table">
+      <view class="table-head"><text>时间</text><text>序号</text><text>状态</text><text>模式</text><text>位置</text></view>
+      <view class="table-empty" wx:if="{{recent.length==0}}">暂无记录</view>
+      <view class="table-row" wx:for="{{recent}}" wx:key="key">
+        <text>{{item.time}}</text><text>{{item.seq}}</text><text>{{item.stateName}}</text><text>{{item.mode}}</text><text>{{item.pos}}</text>
+        <text class="pwm-row">{{item.pwmExtra}}</text>
+      </view>
+    </view>
+
+    <view class="quality-band">
+      <view><text>无效数据帧</text><text>{{invalidPackets}}</text></view>
+      <view><text>序号检测丢包</text><text>{{droppedPackets}}</text></view>
+    </view>
+    <view class="bottom-space"></view>
+  </scroll-view>
+</view>

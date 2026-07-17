@@ -1,0 +1,62 @@
+<view class="page-shell">
+  <view class="connection-bar">
+    <view class="connection-dot {{connected ? 'online' : ''}}"></view>
+    <view class="connection-copy"><text class="connection-title">{{connected ? deviceName : '小车未连接'}}</text><text class="connection-detail">{{packetRate}} Hz · 有效 {{validPackets}} · 丢包 {{droppedPackets}}</text></view>
+    <button class="compact-button" bindtap="connectBLE">{{connecting ? '扫描中' : (connected ? '断开' : '连接')}}</button>
+  </view>
+  <scroll-view scroll-y class="page-scroll">
+    <view class="chart-section">
+      <view class="chart-head"><text>{{chartLabel}}</text><text>最近 40 秒</text></view>
+      <view class="chart-selector">
+        <button wx:for="{{chartKeys}}" wx:key="id" wx:for-item="ck" class="{{chartKey==ck?'active':''}}" data-key="{{ck}}" bindtap="selectChart">{{charts[ck].label}}</button>
+      </view>
+      <canvas type="2d" id="telemetryChart" class="telemetry-chart"></canvas>
+      <view class="chart-legend"><view wx:for="{{legend}}" wx:key="name"><view class="legend-line" style="background:{{item.color}}"></view><text>{{item.name}}</text></view></view>
+    </view>
+
+    <view class="metric-section">
+      <text class="metric-heading">链路与状态</text>
+      <view class="metric-grid">
+        <view wx:for="{{metrics}}" wx:key="label">
+          <text>{{item.label}}</text>
+          <text class="metric-value">{{item.value}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="metric-section" wx:if="{{sensors.length}}">
+      <text class="metric-heading">传感器阵列</text>
+      <view class="sensor-line">
+        <view wx:for="{{sensors}}" wx:key="name" class="sensor {{item.center?'center':''}} {{item.active?'active':''}}">{{item.name}}</view>
+      </view>
+      <view class="metric-grid" wx:if="{{debug.digital !== undefined}}">
+        <view><text>数字位</text><text class="metric-value">0x{{debug.digital !== undefined ? ((debug.digital.toString(16).toUpperCase())) : '?'}}</text></view>
+        <view><text>位置</text><text class="metric-value">{{debug.pos}}</text></view>
+      </view>
+    </view>
+
+    <view class="metric-section" wx:if="{{!helloReceived && debug.protocol >= 2}}">
+      <text class="metric-heading">电机输出</text>
+      <view class="metric-grid">
+        <view wx:if="{{debug.pwmFL !== undefined}}"><text>PWM FL</text><text class="metric-value">{{debug.pwmFL}}</text></view>
+        <view wx:if="{{debug.pwmFR !== undefined}}"><text>PWM FR</text><text class="metric-value">{{debug.pwmFR}}</text></view>
+        <view wx:if="{{debug.pwmBL !== undefined}}"><text>PWM BL</text><text class="metric-value">{{debug.pwmBL}}</text></view>
+        <view wx:if="{{debug.pwmBR !== undefined}}"><text>PWM BR</text><text class="metric-value">{{debug.pwmBR}}</text></view>
+        <view wx:if="{{debug.targetL !== undefined}}"><text>目标 L</text><text class="metric-value">{{debug.targetL}}</text></view>
+        <view wx:if="{{debug.targetR !== undefined}}"><text>目标 R</text><text class="metric-value">{{debug.targetR}}</text></view>
+      </view>
+    </view>
+
+    <view wx:if="{{helloReceived}}" class="metric-section">
+      <text class="metric-heading">电机输出</text>
+      <view class="metric-grid">
+        <view wx:if="{{debug.leftPwm !== undefined}}"><text>左轮 PWM</text><text class="metric-value">{{debug.leftPwm}}</text></view>
+        <view wx:if="{{debug.rightPwm !== undefined}}"><text>右轮 PWM</text><text class="metric-value">{{debug.rightPwm}}</text></view>
+        <view wx:if="{{debug.targetL !== undefined}}"><text>目标 L</text><text class="metric-value">{{debug.targetL}}</text></view>
+        <view wx:if="{{debug.targetR !== undefined}}"><text>目标 R</text><text class="metric-value">{{debug.targetR}}</text></view>
+      </view>
+    </view>
+
+    <view class="bottom-space"></view>
+  </scroll-view>
+</view>

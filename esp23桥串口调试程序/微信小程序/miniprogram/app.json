@@ -1,0 +1,27 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/vehicle/vehicle",
+    "pages/telemetry/telemetry",
+    "pages/logs/logs"
+  ],
+  "window": {
+    "navigationBarTitleText": "循迹底盘调试台",
+    "navigationBarBackgroundColor": "#181b20",
+    "navigationBarTextStyle": "white"
+  },
+  "tabBar": {
+    "color": "#8a9099",
+    "selectedColor": "#00a8a8",
+    "backgroundColor": "#f4f5f6",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "控制" },
+      { "pagePath": "pages/vehicle/vehicle", "text": "车辆" },
+      { "pagePath": "pages/telemetry/telemetry", "text": "参数" },
+      { "pagePath": "pages/logs/logs", "text": "记录" }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2"
+}

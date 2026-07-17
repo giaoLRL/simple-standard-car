@@ -40,6 +40,7 @@
 #include "modules/line_sensor/line_sensor.hpp"
 #include "modules/motor/motor.hpp"
 #include "modules/pid/pid.hpp"
+#include "modules/common/uart_protocol.hpp"
 
 /* ============================================================
  *  全局可调参数（外部可通过串口 / 蓝牙修改）
@@ -131,6 +132,7 @@ int main(void)
     g_motor.init();
     buzzer_init();
     turn_fsm_init();
+    proto_init();
 
     /* 启动短响：确认当前固件已运行，随后进入 PB21 白底标定等待。 */
     buzzer_beep(80U);
@@ -181,6 +183,9 @@ int main(void)
         g_dbg_error      = error;
         g_dbg_line_found = line_found;
 
+        proto_send_telemetry();
+        proto_poll_commands();
+
         /* ---- 直角弯状态机 ---- */
         uint8_t digital = g_line_sensor.get_digital();
         uint32_t now_ms = timebase_millis();
@@ -217,16 +222,16 @@ int main(void)
             int32_t correction = round_to_i32(
                 g_pid.calc((float)(-pid_input)));
 
-            /* correction 钳位 ±BASE_SPEED: 保证 raw_left/right 不超 PWM_MAX,
+            /* correction 钳位 ±g_base_speed: 保证 raw_left/right 不超 PWM_MAX,
              *   从而 apply_diff_steering 永不触发等比例缩放,
              *   且内轮不会反转 (最低 0 = 停转, 已是极限差速)。 */
-            if (correction >  BASE_SPEED) correction =  BASE_SPEED;
-            if (correction < -BASE_SPEED) correction = -BASE_SPEED;
+            if (correction >  (int32_t)g_base_speed) correction =  (int32_t)g_base_speed;
+            if (correction < -(int32_t)g_base_speed) correction = -(int32_t)g_base_speed;
 
             int16_t left_cmd, right_cmd;
             apply_diff_steering(
-                (int32_t)BASE_SPEED + correction,
-                (int32_t)BASE_SPEED - correction,
+                (int32_t)g_base_speed + correction,
+                (int32_t)g_base_speed - correction,
                 &left_cmd, &right_cmd,
                 PWM_MAX);
 

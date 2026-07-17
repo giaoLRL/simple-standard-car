@@ -1,0 +1,17 @@
+page { min-height:100%; background:#eef0f2; color:#24292f; font-size:14px; }
+view, text, button, input, canvas { box-sizing:border-box; }
+button { border-radius:5px; }
+button::after { border:0; }
+.page-shell { min-height:100vh; display:flex; flex-direction:column; }
+.page-scroll { flex:1; height:calc(100vh - 62px); padding:12px; }
+.connection-bar { height:62px; flex:none; display:flex; align-items:center; padding:0 14px; background:#181b20; color:#fff; }
+.connection-dot { width:9px; height:9px; border-radius:50%; margin-right:10px; background:#d64545; box-shadow:0 0 0 3px rgba(214,69,69,.14); }
+.connection-dot.online { background:#36b37e; box-shadow:0 0 0 3px rgba(54,179,126,.14); }
+.connection-copy { flex:1; min-width:0; display:flex; flex-direction:column; }
+.connection-title { font-size:14px; color:#f4f5f6; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.connection-detail { margin-top:2px; font-size:11px; color:#9ca3ab; }
+.compact-button { width:64px; min-width:64px; margin:0; padding:5px 0; line-height:20px; color:#fff; background:#303740; border:1px solid #4a525c; font-size:12px; }
+.bottom-space { height:24px; }
+.muted { color:#858d96; }
+.positive { color:#198754; }
+.negative { color:#c43d35; }

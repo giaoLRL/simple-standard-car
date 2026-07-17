@@ -1,0 +1,21 @@
+.chart-section, .metric-section { background:#fff; border:1px solid #dfe2e6; border-radius:6px; padding:12px; margin-bottom:12px; }
+.chart-head { display:flex; align-items:center; justify-content:space-between; color:#20252b; font-weight:600; }
+.chart-head text:last-child { color:#858d96; font-size:11px; font-weight:400; }
+.chart-selector { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin:10px 0 8px; }
+.chart-selector button { min-width:0; margin:0; padding:5px 0; line-height:18px; color:#68717b; background:#eceff1; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.chart-selector button.active { color:#fff; background:#303740; }
+.telemetry-chart { width:100%; height:220px; border:1px solid #e1e4e8; }
+.chart-legend { min-height:24px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:6px; }
+.chart-legend > view { display:flex; align-items:center; color:#68717b; font-size:10px; }
+.legend-line { width:16px; height:2px; margin-right:4px; }
+.metric-heading { display:block; margin-bottom:8px; color:#20252b; font-size:14px; font-weight:600; }
+.metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#e4e7ea; }
+.metric-grid > view { min-height:52px; padding:8px 10px; background:#f8f9fa; }
+.metric-grid text { display:block; color:#858d96; font-size:10px; }
+.metric-value { display:block !important; margin-top:4px; color:#252a30 !important; font-size:14px !important; font-weight:600; word-break:break-all; }
+.sensor-line { display:flex; justify-content:center; gap:4px; margin:5px 0 12px; flex-wrap:wrap; }
+.sensor { width:24px; height:24px; line-height:22px; text-align:center; color:#7b838c; border:1px solid #bcc2c8; font-size:8px; }
+.sensor.center { border-color:#007f82; }
+.sensor.active { color:#fff; border-color:#d99a32; background:#292e34; }
+.availability { margin-bottom:8px; padding:7px 9px; border-left:3px solid; font-size:11px; background:#f4f5f6; }
+.availability.ready { color:#18734a; border-color:#36a66f; }.availability.blocked { color:#a63d32; border-color:#d64545; }

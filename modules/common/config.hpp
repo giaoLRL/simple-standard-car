@@ -76,20 +76,21 @@ static const int16_t g_sensor_position[SENSOR_COUNT] = {
 #define HBRIDGE_DEADTIME_LOOPS    (64U)
 
 /* ============================================================
- *  控制参数
+ *  控制参数 — 运行时可通过串口/蓝牙修改
  * ============================================================ */
 
-#define BASE_SPEED                (200)   /* 基础速度（PWM 占空比, 40% 远离电机死区 10-15%）*/
+extern uint16_t g_base_speed;       /* 基础速度（PWM 占空比, 默认 200）*/
+extern uint16_t g_turn_outer_speed; /* 转弯外轮速度（默认 170）*/
+extern uint16_t g_turn_inner_speed; /* 转弯内轮速度（默认 80）*/
+
 #define LINE_PRESENT_MIN          (300U)  /* 归一化暗度总和低于此值视为丢线 */
 
 /* PID 参数（通过 g_pid 对象直接访问: g_pid.kp, g_pid.ki, g_pid.kd）*/
 
 /* ============================================================
- *  直角弯状态机参数
+ *  直角弯状态机参数（编译期常量）
  * ============================================================ */
 
-#define TURN_OUTER_SPEED   (170)   /* 转弯外轮速度 */
-#define TURN_INNER_SPEED   (80)    /* 转弯内轮速度（正值：同向慢转，差速转弯）*/
 #define TURN_TIMEOUT_MS    (2000)  /* 转弯最大允许时间，超时判丢线 */
 #define TURN_ADVANCE_MS    (50)   /* 转弯前直走延时，让车身前进到转弯点 */
 

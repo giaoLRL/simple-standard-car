@@ -1,0 +1,25 @@
+.record-header { display:flex; align-items:center; padding:16px; color:#fff; background:#303740; border-radius:6px; }
+.record-header.active { background:#842f2f; }
+.record-indicator { width:12px; height:12px; margin-right:12px; border-radius:50%; background:#9da4ac; }
+.record-header.active .record-indicator { background:#ff6b62; box-shadow:0 0 0 5px rgba(255,107,98,.16); }
+.record-copy { flex:1; display:flex; flex-direction:column; }
+.record-title { font-size:14px; }.record-time { margin-top:3px; color:#cdd2d7; font-size:22px; font-variant-numeric:tabular-nums; }
+.record-button { width:70px; margin:0; padding:5px 0; color:#fff; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.35); font-size:12px; }
+.record-stats { display:grid; grid-template-columns:repeat(4,1fr); margin:12px 0; background:#fff; border:1px solid #dfe2e6; border-radius:6px; }
+.record-stats > view { padding:10px 4px; text-align:center; border-right:1px solid #eceef0; }
+.record-stats > view:last-child { border-right:0; }
+.record-stats text { display:block; color:#858d96; font-size:10px; }
+.record-stats .stat-value { margin-top:4px; color:#252a30; font-size:14px; font-weight:600; }
+.record-stats .alert { color:#c43d35; }
+.record-actions { display:grid; grid-template-columns:2fr 1fr; gap:8px; margin-bottom:12px; }
+.record-actions button { margin:0; font-size:13px; }
+.export-button { color:#fff; background:#007f82; }.clear-button { color:#a63d32; background:#fff; border:1px solid #d7aaa7; }
+.log-table { overflow:hidden; background:#fff; border:1px solid #dfe2e6; border-radius:6px; }
+.table-head, .table-row { display:grid; grid-template-columns:1.25fr .7fr 1fr .8fr .7fr; align-items:center; }
+.table-head { padding:8px 7px; color:#69717a; background:#e9ecef; font-size:10px; }
+.table-row { position:relative; min-height:58px; padding:7px 7px 20px; border-top:1px solid #eceef0; color:#31373e; font-size:11px; }
+.table-row text { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.pwm-row { position:absolute; left:7px; right:7px; bottom:5px; color:#858d96; font-size:9px; }
+.table-empty { padding:30px; text-align:center; color:#9ba2aa; }
+.quality-band { margin-top:12px; padding:10px 12px; background:#fff; border-left:3px solid #d99a32; }
+.quality-band > view { display:flex; justify-content:space-between; padding:4px 0; color:#626a73; font-size:11px; }
