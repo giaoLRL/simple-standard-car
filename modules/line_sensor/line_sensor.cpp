@@ -3,11 +3,11 @@
  *
  * 硬件: CD4051 模拟开关 + ADC0_CH3
  *
- * 参考: 感为无MCU灰度传感器例程
+ * 参考: 感为无MCU灰度传感器例程 (No_Mcu_Ganv_Grayscale_Sensor.c/.h)
  *   - Get_Analog_value:  8 采样均值滤波 + 通道切换
  *   - convertAnalogToDigital: 二值化（1:2 / 2:1 灰度阈值）
  *   - normalizeAnalogValues:  预计算系数 × (raw - black)
- *   - No_MCU_Ganv_Sensor_Init: 校准参数计算 + 系数预计算
+ *   - No_Mcu_Ganv_Sensor_Init: 校准参数计算 + 系数预计算
  *
  * 依赖: config.hpp（GPIO 宏）、iinterfaces.hpp（接口）
  *
@@ -163,6 +163,7 @@ static void wait_key_press_()
     delay_cycles(20U * (CPUCLK_FREQ / 1000U));
 }
 
+/* 标定错误报警: 3 声短促蜂鸣 (150ms 响 / 100ms 间隔) */
 static void signal_calibration_error_()
 {
     for (uint8_t i = 0; i < 3U; i++) {
@@ -274,8 +275,8 @@ void LineSensor::calibrate()
 
 bool LineSensor::update()
 {
-    /* 标定未完成时拒绝更新: 此时 cal_black_ 全零,
-     * 所有读数的归一化值均为 0 → error_=0 → 车直冲。*/
+    /* 标定未完成时拒绝更新: 归一化和位置计算依赖 cal_black_/cal_white_,
+     * 未标定时 error_=0 → 车直冲，故直接拒绝。*/
     if (!ok_) {
         digital_    = 0;
         error_      = 0;
@@ -308,9 +309,8 @@ bool LineSensor::update()
         /* 中间灰度 → 保持上一状态（迟滞特性）*/
     }
 
-    /* ---- 3. 归一化处理 (不限幅, 保留连续渐变) ----
-     *   修复: 移除 cal_black/cal_white 处的硬限幅,
-     *   仅限幅到 uint16_t 范围防溢出。
+    /* ---- 3. 归一化处理 (移除 cal 边界硬限幅, 保留 [0,4095] 限幅) ----
+     *   软限幅仅防 uint16_t 溢出。
      *   normal_[i] 可在 [0, 4095] 内连续变化,
      *   线与白的过渡区产生中间灰度 → 子传感器插值。 */
     for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
@@ -451,8 +451,8 @@ extern "C" void DMA_IRQHandler(void)
         case DL_DMA_EVENT_IIDX_DMACH0:
             DL_DMA_disableChannel(DMA, LINE_DMA_CHAN_ID);
             DL_ADC12_stopConversion(LINE_ADC_INST);
-            /* 数据同步屏障: 确保 DMA 写入的 buf 对主循环可见 (Cortex-M0+ 上
-             * __DSB() 是完整的数据/指令同步屏障, 防止 CPU 乱序读到旧缓存行) */
+            /* 内存屏障: 确保 DMA 写入在 g_dma_done 置位前对 CPU 可见
+             * (Cortex-M0+ 无数据缓存, DSB 保证总线写入顺序) */
             __DSB();
             g_dma_done = true;
             break;

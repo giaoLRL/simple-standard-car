@@ -14,7 +14,7 @@ function inferFieldType(name) {
   if (/^(d|digital|bits)$/i.test(name)) return 'digital';
   if (/^(l|r)?(pwm|enc|speed|target|corr|trim|moment|output)/i.test(name)) return 'int';
   if (/^(seq|tick|state|flags|caps|stby)$/i.test(name)) return 'int';
-  if (/^(pos|err|angle|gyro|yaw|curv|kp|ki|kd)/i.test(name)) return 'float';
+  if (/^(pos|err|angle|gyro|yaw|curv|kp|ki|kd|error)/i.test(name)) return 'float';
   return 'float';
 }
 
@@ -40,6 +40,47 @@ function defaultDebugV3() {
 
 const LEGACY_STATES = ['直道', '入弯', '弯中', '出弯', '丢线', '保留', '直角弯', '十字'];
 
+/* ============================================================
+ *  二进制遥测帧载荷布局 (TlmPayload, packed, 小端)
+ *
+ *  Offset  Type       Field
+ *  ------  ----       -----
+ *   0      uint16     seq
+ *   2      uint32     tick
+ *   6      uint8      state
+ *   7      uint8      flags
+ *   8      int16      error
+ *  10      int16      left_pwm
+ *  12      int16      right_pwm
+ *  14      uint8      digital
+ *  15      uint16[8]  normal (16 bytes)
+ *  31      uint16[8]  analog (16 bytes)
+ *  Total: 47 bytes
+ * ============================================================ */
+const TLM_PAYLOAD_SIZE = 47;
+
+function parseBinaryTlmPayload(buffer, byteOffset) {
+  const dv = new DataView(buffer.buffer, buffer.byteOffset + byteOffset, TLM_PAYLOAD_SIZE);
+  return {
+    seq:       dv.getUint16(0, true),
+    tick:      dv.getUint32(2, true),
+    state:     dv.getUint8(6),
+    flags:     dv.getUint8(7),
+    error:     dv.getInt16(8, true),
+    leftPwm:   dv.getInt16(10, true),
+    rightPwm:  dv.getInt16(12, true),
+    digital:   dv.getUint8(14),
+    normal:   [dv.getUint16(15, true), dv.getUint16(17, true),
+               dv.getUint16(19, true), dv.getUint16(21, true),
+               dv.getUint16(23, true), dv.getUint16(25, true),
+               dv.getUint16(27, true), dv.getUint16(29, true)],
+    analog:   [dv.getUint16(31, true), dv.getUint16(33, true),
+               dv.getUint16(35, true), dv.getUint16(37, true),
+               dv.getUint16(39, true), dv.getUint16(41, true),
+               dv.getUint16(43, true), dv.getUint16(45, true)]
+  };
+}
+
 class TelemetryService {
   constructor() {
     this.initialized = false;
@@ -49,6 +90,7 @@ class TelemetryService {
     this.charWrite = null;
     this.charNotify = null;
     this.buffer = '';
+    this.binBuf = new Uint8Array(0);  /* 二进制帧累积缓冲区 */
     this.writeQueue = [];
     this.writing = false;
     this.throttleMap = {};
@@ -60,6 +102,7 @@ class TelemetryService {
     this.fieldMap = null;
     this.helloTimer = null;
     this.connectionMode = 'unknown';
+    this.isBinary = false;  /* true = MCU 发送二进制遥测帧 */
     this.state = {
       connected: false, connecting: false, deviceName: '', packetRate: 0,
       validPackets: 0, invalidPackets: 0, droppedPackets: 0,
@@ -100,7 +143,11 @@ class TelemetryService {
   }
 
   emit(reason) {
-    this.listeners.slice().forEach((listener) => listener(this.state, reason));
+    try {
+      this.listeners.slice().forEach((listener) => listener(this.state, reason));
+    } catch (e) {
+      console.warn('emit 监听器异常', e);
+    }
   }
 
   getUiConfig() {
@@ -143,6 +190,7 @@ class TelemetryService {
     this.connectionMode = 'unknown';
     this.hello = null;
     this.fieldMap = null;
+    this.isBinary = false;
     if (this.helloTimer) { clearTimeout(this.helloTimer); this.helloTimer = null; }
     this.emit('connection');
     wx.closeBluetoothAdapter({ complete: () => setTimeout(() => this.openAdapter(), 250) });
@@ -185,7 +233,12 @@ class TelemetryService {
       deviceId,
       success: () => {
         this.deviceId = deviceId;
-        if (wx.setBLEMTU) wx.setBLEMTU({ deviceId, mtu: 256 });
+        if (wx.setBLEMTU) {
+          wx.setBLEMTU({
+            deviceId, mtu: 256,
+            fail: () => { /* MTU 协商失败降级到默认 23 字节, 桥会自动分片 */ }
+          });
+        }
         wx.getBLEDeviceServices({
           deviceId,
           success: (res) => {
@@ -234,7 +287,9 @@ class TelemetryService {
         this.state.connecting = false;
         this.state.deviceName = name;
         this.buffer = '';
+        this.binBuf = new Uint8Array(0);
         this.connectionMode = 'wait_hello';
+        this.isBinary = false;
         this.helloTimer = setTimeout(() => this.onHelloTimeout(), HELLO_TIMEOUT);
         this.sendCmd('HELLO');
         this.emit('connection');
@@ -271,16 +326,18 @@ class TelemetryService {
     this.charWrite = null;
     this.charNotify = null;
     this.buffer = '';
+    this.binBuf = new Uint8Array(0);
     this.writeQueue = [];
     this.writing = false;
     this.hello = null;
     this.fieldMap = null;
     this.connectionMode = 'unknown';
+    this.isBinary = false;
     if (this.helloTimer) { clearTimeout(this.helloTimer); this.helloTimer = null; }
     this.state.connected = false;
     this.state.connecting = false;
     this.state.packetRate = 0;
-    this.state.debug = this.connectionMode === 'v3_adaptive' ? defaultDebugV3() : defaultDebugLegacy();
+    this.state.debug = defaultDebugLegacy();
     this.emit('connection');
   }
 
@@ -336,10 +393,31 @@ class TelemetryService {
     });
   }
 
+  /* ============================================================
+   *  onData — 混合处理文本行 + 二进制帧
+   *
+   *  文本行 (HELLO/老版本遥测): 以 \n 分隔
+   *  二进制帧: [0xAA][0x55][type][len][payload][checksum]
+   * ============================================================ */
   onData(buffer) {
     const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.length; i++) this.buffer += String.fromCharCode(bytes[i]);
+
+    /* ---- 追加到文本缓冲区 (用于 HELLO / 命令 / 老版本遥测) ---- */
+    for (let i = 0; i < bytes.length; i++) {
+      this.buffer += String.fromCharCode(bytes[i]);
+    }
     if (this.buffer.length > 2048) this.buffer = this.buffer.slice(-1024);
+
+    /* ---- 追加到二进制缓冲区 ---- */
+    const merged = new Uint8Array(this.binBuf.length + bytes.length);
+    merged.set(this.binBuf);
+    merged.set(bytes, this.binBuf.length);
+    this.binBuf = merged;
+
+    /* ---- 提取二进制帧 ---- */
+    this.tryParseBinaryFrames();
+
+    /* ---- 提取文本行 ---- */
     let newline;
     while ((newline = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, newline).trim();
@@ -354,7 +432,7 @@ class TelemetryService {
           this.emit('hello_ready');
         }
         this.parseV2(line);
-      } else if (line.startsWith('$T,3,')) {
+      } else if (!this.isBinary && line.startsWith('$T,3,')) {
         if (this.connectionMode !== 'v3_adaptive') continue;
         this.parseV3(line);
       } else if (line.startsWith('$D,')) {
@@ -368,20 +446,126 @@ class TelemetryService {
     }
   }
 
+  /* ---- 从二进制缓冲区中提取完整帧 ---- */
+  tryParseBinaryFrames() {
+    while (this.binBuf.length >= 6) {
+      /* 查找 0xAA 0x55 帧头 */
+      let start = -1;
+      for (let i = 0; i < this.binBuf.length - 1; i++) {
+        if (this.binBuf[i] === 0xAA && this.binBuf[i + 1] === 0x55) {
+          start = i;
+          break;
+        }
+      }
+      if (start < 0) {
+        /* 未找到帧头，保留最后 1 字节（可能是 0xAA 的一半） */
+        if (this.binBuf.length > 1) this.binBuf = this.binBuf.slice(-1);
+        break;
+      }
+
+      /* 丢弃帧头前的垃圾字节 */
+      if (start > 0) this.binBuf = this.binBuf.slice(start);
+
+      /* 需要至少 header(2) + type(1) + len(1) = 4 字节 */
+      if (this.binBuf.length < 4) break;
+
+      const frameType = this.binBuf[2];
+      const payloadLen = this.binBuf[3];
+      const totalLen = 5 + payloadLen;  /* header(2) + type(1) + len(1) + payload + checksum(1) */
+
+      if (totalLen > 256) {
+        /* 非法长度，跳过帧头重试 */
+        this.binBuf = this.binBuf.slice(2);
+        continue;
+      }
+
+      if (this.binBuf.length < totalLen) break;  /* 帧不完整 */
+
+      /* 校验 checksum = XOR(type, len, payload[0..len-1]) */
+      let checksum = 0;
+      for (let i = 2; i < totalLen - 1; i++) {
+        checksum ^= this.binBuf[i];
+      }
+      if (checksum !== this.binBuf[totalLen - 1]) {
+        /* checksum 错误，跳过帧头 */
+        this.binBuf = this.binBuf.slice(2);
+        this.invalidPacket();
+        continue;
+      }
+
+      /* 提取载荷 */
+      const payload = this.binBuf.slice(4, 4 + payloadLen);
+      this.binBuf = this.binBuf.slice(totalLen);
+
+      /* 分发 */
+      if (frameType === 0x01) {
+        this.parseBinaryTlm(payload);
+      }
+      /* 其他帧类型忽略 */
+    }
+  }
+
+  /* ---- 二进制遥测帧解析 ---- */
+  parseBinaryTlm(payload) {
+    if (payload.length < TLM_PAYLOAD_SIZE) return this.invalidPacket();
+    const raw = parseBinaryTlmPayload(payload, 0);
+
+    const flags = raw.flags || 0;
+    const digital = raw.digital || 0;
+
+    /* 展开归一化和模拟量字段 */
+    const debug = {
+      protocol: 4,
+      receivedAt: Date.now(),
+      seq: raw.seq,
+      tick: raw.tick,
+      state: raw.state,
+      stateName: (this.hello && this.hello.states)
+        ? (this.hello.states[raw.state] || ('状态' + raw.state))
+        : ('状态' + raw.state),
+      flags,
+      digital,
+      pos: raw.error,       /* 兼容旧界面：pos 显示 PID 误差 */
+      err: raw.error,
+      error: raw.error,
+      leftPwm: raw.leftPwm,
+      rightPwm: raw.rightPwm,
+      mode: (flags & 4) ? '停车' : ((flags & 2) ? '手动' : '循迹'),
+      stopped: !!(flags & 4),
+      /* 归一化值 */
+      n0: raw.normal[0], n1: raw.normal[1], n2: raw.normal[2], n3: raw.normal[3],
+      n4: raw.normal[4], n5: raw.normal[5], n6: raw.normal[6], n7: raw.normal[7],
+      /* 模拟量 */
+      a0: raw.analog[0], a1: raw.analog[1], a2: raw.analog[2], a3: raw.analog[3],
+      a4: raw.analog[4], a5: raw.analog[5], a6: raw.analog[6], a7: raw.analog[7],
+      /* 缺省字段 (保持兼容) */
+      raw: digital & 0x1F,
+      rawHex: '0x' + ('0' + (digital & 0x1F).toString(16).toUpperCase()).slice(-2),
+      l2: !(digital & 1), l1: !(digital & 2), mid: !(digital & 4),
+      r1: !(digital & 8), r2: !(digital & 16)
+    };
+
+    this.acceptPacket(debug);
+  }
+
   parseHello(line) {
     try {
       const commaIdx = line.indexOf(',', 7);
       const jsonStr = line.slice(commaIdx + 1);
       const data = JSON.parse(jsonStr);
       this.hello = data;
+
+      /* 检查是否二进制模式 */
+      this.isBinary = !!(data.bin);
+
       this.fieldMap = {};
       if (Array.isArray(data.tlm)) {
         data.tlm.forEach(function (name, index) { this.fieldMap[name] = index; }.bind(this));
       }
-      this.connectionMode = 'v3_adaptive';
+      this.connectionMode = this.isBinary ? 'v4_binary' : 'v3_adaptive';
       if (this.helloTimer) { clearTimeout(this.helloTimer); this.helloTimer = null; }
-      this.state.debug = defaultDebugV3();
-      this.state.debug.protocol = 3;
+      this.state.debug = this.isBinary ? defaultDebugV3() : defaultDebugV3();
+      this.state.debug.protocol = this.isBinary ? 4 : 3;
       if (this.hello.states) {
         this.state.debug.stateName = this.hello.states[0] || '';
       }
@@ -485,10 +669,16 @@ class TelemetryService {
     debug.stateName = LEGACY_STATES[debug.state] || '未知';
     debug.pwmFL = debug.pwmBL = debug.targetL;
     debug.pwmFR = debug.pwmBR = debug.targetR;
-    if (p.length > 10) debug.raw = finiteNumber(p[10], true) & 0x1F;
-    debug.rawHex = '0x' + ('0' + debug.raw.toString(16).toUpperCase()).slice(-2);
-    debug.l2 = !(debug.raw & 1); debug.l1 = !(debug.raw & 2); debug.mid = !(debug.raw & 4);
-    debug.r1 = !(debug.raw & 8); debug.r2 = !(debug.raw & 16);
+    if (p.length > 10) {
+      const rawVal = finiteNumber(p[10], true);
+      if (rawVal !== null) {
+        const masked = rawVal & 0x1F;
+        debug.raw = masked;
+        debug.rawHex = '0x' + ('0' + masked.toString(16).toUpperCase()).slice(-2);
+        debug.l2 = !(masked & 1); debug.l1 = !(masked & 2); debug.mid = !(masked & 4);
+        debug.r1 = !(masked & 8); debug.r2 = !(masked & 16);
+      }
+    }
     this.acceptPacket(debug);
   }
 

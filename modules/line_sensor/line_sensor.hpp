@@ -46,7 +46,7 @@ public:
      * 带校准参数的初始化（参照感为例程 No_MCU_Ganv_Sensor_Init 模式）
      *   white: 白基准数组（8 元素）
      *   black: 黑基准数组（8 元素）
-     * 调用后 ok_ 置 true，归一化系数和灰度阈值可用
+     * 对称性和 span 校验通过后 ok_ 置 true；失败则保持 false
      */
     void init_with_calibration(const uint16_t *white, const uint16_t *black);
 

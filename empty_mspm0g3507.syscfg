@@ -101,9 +101,9 @@ GPIO3.associatedPins[0].internalResistor = "PULL_UP";
 
 GPIO4.$name                          = "GPIO_BUZZER";
 GPIO4.associatedPins[0].$name        = "BUZZER";
-GPIO4.associatedPins[0].assignedPort = "PORTA";
-GPIO4.associatedPins[0].assignedPin  = "2";
 GPIO4.associatedPins[0].ioStructure  = "SD";
+GPIO4.associatedPins[0].assignedPort = "PORTB";
+GPIO4.associatedPins[0].assignedPin  = "17";
 
 PWM1.$name                              = "MOTOR_PWM";
 PWM1.timerCount                         = 1600;
@@ -155,5 +155,5 @@ GPIO2.associatedPins[1].pin.$suggestSolution = "PA16";
 GPIO2.associatedPins[2].pin.$suggestSolution = "PA17";
 GPIO2.associatedPins[3].pin.$suggestSolution = "PB9";
 GPIO3.associatedPins[0].pin.$suggestSolution = "PB21";
-GPIO4.associatedPins[0].pin.$suggestSolution = "PA2";
+GPIO4.associatedPins[0].pin.$suggestSolution = "PB17";
 SYSCTL.peripheral.$suggestSolution           = "SYSCTL";

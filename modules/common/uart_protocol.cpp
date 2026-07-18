@@ -30,11 +30,23 @@ static bool hello_sent = false;
 
 void proto_init(void)
 {
-    DL_UART_Main_enableInterrupt(UART_0_INST, DL_UART_MAIN_INTERRUPT_RX);
-    NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
     hello_sent = false;
     tlm_seq = 0;
-    proto_send_hello();
+    /*
+     * 修复 (2026-07-18): 原实现在 proto_init 中立即调用 proto_send_hello(),
+     * 发送约 300 字节 JSON 到 UART。若 UART 未连接 (ESP32 未通电), TX 环
+     * 形缓冲区 256 字节被塞满后, uart_debug_send_char 自旋等待 ISR 腾空位,
+     * 但 ISR 不会触发——导致永久阻塞, 程序卡在初始化阶段, 蜂鸣器和电机都不工作。
+     *
+     * 现在: proto_init 只标记"已初始化", 不主动发送 HELLO。
+     * HELLO 仅在小程序发送 "HELLO" 命令时响应 (此时 UART 必然已建立连接),
+     * 或由外部主动调用 proto_send_hello() 时发送。
+     * telemetry 在 hello_sent=false 时不会发送, 不影响正常运行。
+     *
+     * 副作用: 不用 ESP32/小程序也能正常启动和标定。需要远程时连上后
+     * 小程序会自动发送 HELLO 命令触发握手。
+     */
+    /* proto_send_hello(); — 移除启动时阻塞发送 */
 }
 
 void proto_send_hello(void)
@@ -43,17 +55,17 @@ void proto_send_hello(void)
         "$HELLO,0,{"
         "\"dev\":\"LineFollower\","
         "\"mcu\":\"MSPM0G3507\","
-        "\"fw\":\"1.0\","
+        "\"fw\":\"2.0\","
         "\"sensors\":%u,"
         "\"motors\":2,"
         "\"encoders\":0,"
         "\"gyro\":false,"
         "\"caps\":%u,"
+        "\"bin\":true,"
         "\"states\":[\"直道\",\"转向延时\",\"左转\",\"右转\",\"丢线\"],"
         "\"tlm\":["
-        "\"seq\",\"tick\",\"state\",\"flags\",\"caps\","
-        "\"digital\",\"pos\",\"err\","
-        "\"leftPwm\",\"rightPwm\","
+        "\"seq\",\"tick\",\"state\",\"flags\","
+        "\"error\",\"leftPwm\",\"rightPwm\",\"digital\","
         "\"n0\",\"n1\",\"n2\",\"n3\",\"n4\",\"n5\",\"n6\",\"n7\","
         "\"a0\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\",\"a6\",\"a7\""
         "],"
@@ -72,6 +84,13 @@ void proto_send_hello(void)
     hello_sent = true;
 }
 
+/* ============================================================
+ *  proto_send_telemetry — 二进制紧凑帧发送
+ *
+ *  帧格式: [0xAA][0x55][type=0x01][len=47][TlmPayload:47B][checksum]
+ *  总长: 52 字节 (vs 旧 JSON ~150 字节)
+ *  ISR 后台发送不阻塞主循环 (缓冲区满时可能短暂自旋等待)
+ * ============================================================ */
 void proto_send_telemetry(void)
 {
     if (!hello_sent) return;
@@ -82,42 +101,47 @@ void proto_send_telemetry(void)
 
     uint8_t flags = 0;
     if (!g_line_track_on) flags |= 2;
-    if (!g_motor_on) flags |= 4;
+    if (!g_motor_on)      flags |= 4;
 
-    uart_debug_printf(
-        "$T,3,%u,%lu,%u,%u,%u,"
-        "0x%02X,"
-        "%ld,%ld,"
-        "%d,%d,"
-        "%u,%u,%u,%u,%u,%u,%u,%u,"
-        "%u,%u,%u,%u,%u,%u,%u,%u"
-        "\n",
-        tlm_seq++,
-        (unsigned long)timebase_millis(),
-        state_idx,
-        flags,
-        (unsigned)HELLO_CAPS,
+    TlmPayload payload;
+    payload.seq       = tlm_seq++;
+    payload.tick      = timebase_millis();
+    payload.state     = state_idx;
+    payload.flags     = flags;
+    payload.error     = (int16_t)g_dbg_error;
+    payload.left_pwm  = g_dbg_left_cmd;
+    payload.right_pwm = g_dbg_right_cmd;
+    payload.digital   = g_dbg_digital;
+    for (int i = 0; i < 8; i++) {
+        payload.normal[i] = g_dbg_normal[i];
+        payload.analog[i] = g_dbg_analog[i];
+    }
 
-        (unsigned)(g_dbg_digital & 0xFF),
-        (long)g_dbg_error,
-        (long)(g_dbg_error),
+    /* 组装帧: header(2) + type(1) + len(1) + payload + checksum(1) */
+    uint8_t frame[64];
+    uint8_t *p = frame;
+    *p++ = 0xAA;
+    *p++ = 0x55;
+    *p++ = 0x01;                     /* type: telemetry */
+    *p++ = (uint8_t)sizeof(TlmPayload); /* payload length */
+    (void)memcpy(p, &payload, sizeof(TlmPayload));
+    p += sizeof(TlmPayload);
 
-        (int)g_dbg_left_cmd,
-        (int)g_dbg_right_cmd,
+    /* checksum = XOR(type, len, payload bytes) */
+    uint8_t checksum = frame[2] ^ frame[3];
+    for (int i = 4; i < (int)(p - frame); i++) {
+        checksum ^= frame[i];
+    }
+    *p++ = checksum;
 
-        (unsigned)g_dbg_normal[0], (unsigned)g_dbg_normal[1],
-        (unsigned)g_dbg_normal[2], (unsigned)g_dbg_normal[3],
-        (unsigned)g_dbg_normal[4], (unsigned)g_dbg_normal[5],
-        (unsigned)g_dbg_normal[6], (unsigned)g_dbg_normal[7],
-
-        (unsigned)g_dbg_analog[0], (unsigned)g_dbg_analog[1],
-        (unsigned)g_dbg_analog[2], (unsigned)g_dbg_analog[3],
-        (unsigned)g_dbg_analog[4], (unsigned)g_dbg_analog[5],
-        (unsigned)g_dbg_analog[6], (unsigned)g_dbg_analog[7]
-    );
+    /* 非阻塞发送：写入 TX 环形缓冲区，ISR 后台发出 */
+    uart_debug_send_bytes(frame, (int)(p - frame));
 
     tlm_seq &= 0xFFFF;
 }
+/* ============================================================
+ *  命令解析（文本协议，保持不变）
+ * ============================================================ */
 
 static int parse_value(const char *s)
 {
@@ -178,6 +202,10 @@ static void parse_and_apply(const char *cmd, int len)
         g_pid.kp = (float)val_int / 1000.0f;
     } else if (cmd_is(cmd, key_len, "KI")) {
         g_pid.ki = (float)val_int / 1000.0f;
+        /* 改 Ki 后清零积分: 旧 Ki 下累积的 sum_error_ 若不清零,
+         * 新 Ki 生效时会将其放大/缩小, 导致输出突变 (车猛冲或猛转)。
+         * Ki=0 时 sum_error_ 仍在每帧累加, 改成非零时尤为危险。 */
+        g_pid.set_sum_error(0.0f);
     } else if (cmd_is(cmd, key_len, "KD")) {
         g_pid.kd = (float)val_int / 1000.0f;
     } else if (cmd_is(cmd, key_len, "BSP")) {

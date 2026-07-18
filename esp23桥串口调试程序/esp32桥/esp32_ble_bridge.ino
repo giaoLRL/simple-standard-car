@@ -9,6 +9,9 @@
  *   Characteristic UUID: 0000FFE1-0000-1000-8000-00805F9B34FB
  *   设备名:             JDY-23
  *
+ * v2.0: 增大缓冲区 + 对齐 MicroPython 版超时参数,
+ *       适配 MCU 二进制遥测帧（54 字节/帧, 500ms 间隔）
+ *
  * 硬件接线:
  *   ESP32 3.3V → 外部 3.3V (或 VIN 接 5V)
  *   ESP32 GND  → MCU GND (共地!)
@@ -33,9 +36,15 @@
 #define DEVICE_NAME   "JDY-23"
 #define MAX_MTU       256
 
+/* 增大缓冲区以容纳完整二进制帧 (54 字节 + 余量) */
+#define TX_PACKET_SIZE  128
+/* 对齐 MicroPython 版: 200ms 冲刷 / 500ms 半包丢弃 */
+#define FLUSH_TIMEOUT_MS     200
+#define HALF_PACKET_DISCARD_MS 500
+
 BLECharacteristic *pTxChar;
 bool deviceConnected = false;
-uint8_t txPacket[64];
+uint8_t txPacket[TX_PACKET_SIZE];
 uint8_t txPacketLen = 0;
 uint32_t lastFlush = 0;
 
@@ -91,14 +100,16 @@ void setup() {
 }
 
 void loop() {
-    while (Serial2.available() && txPacketLen < sizeof(txPacket)) {
+    /* 从 UART 读取字节到发送缓冲区 */
+    while (Serial2.available() && txPacketLen < TX_PACKET_SIZE) {
         txPacket[txPacketLen++] = (uint8_t)Serial2.read();
     }
 
     uint32_t now = millis();
 
+    /* 缓冲区满 或 闲置 200ms → 转发到 BLE */
     if (txPacketLen > 0 &&
-        (txPacketLen >= 60 || (now - lastFlush) >= 20)) {
+        (txPacketLen >= TX_PACKET_SIZE || (now - lastFlush) >= FLUSH_TIMEOUT_MS)) {
         if (deviceConnected) {
             pTxChar->notify(txPacket, txPacketLen);
         }
@@ -106,7 +117,8 @@ void loop() {
         lastFlush = now;
     }
 
-    if (txPacketLen > 0 && (now - lastFlush) > 100) {
+    /* 500ms 无新数据 → 丢弃半包（对齐 MicroPython 版） */
+    if (txPacketLen > 0 && (now - lastFlush) > HALF_PACKET_DISCARD_MS) {
         txPacketLen = 0;
         lastFlush = now;
     }

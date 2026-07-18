@@ -49,8 +49,8 @@ static const int16_t g_sensor_position[SENSOR_COUNT] = {
 
 #define MUX_PORT  GPIOB
 #define MUX_PIN_0 DL_GPIO_PIN_20  /* AD0 */
-#define MUX_PIN_1 DL_GPIO_PIN_25  /* AD1 */
-#define MUX_PIN_2 DL_GPIO_PIN_24  /* AD2 */
+#define MUX_PIN_1 DL_GPIO_PIN_24  /* AD1 (硬件 AD1/AD2 接反, 引脚对调) */
+#define MUX_PIN_2 DL_GPIO_PIN_25  /* AD2 (硬件 AD1/AD2 接反, 引脚对调) */
 #define MUX_MASK  (MUX_PIN_0 | MUX_PIN_1 | MUX_PIN_2)
 
 /* 设置地址线：传入通道号 0~7，自动解码为三根地址线 */
@@ -69,8 +69,8 @@ static const int16_t g_sensor_position[SENSOR_COUNT] = {
 #define PWM_MAX                   (1000)  /* 最大 PWM 占空比（量纲统一）*/
 
 /* 方向反转开关：电机实际转动方向与预期相反时置 1 */
-#define LEFT_MOTOR_REVERSED       (0)
-#define RIGHT_MOTOR_REVERSED      (0)
+#define LEFT_MOTOR_REVERSED       (1)
+#define RIGHT_MOTOR_REVERSED      (1)
 
 /* H 桥方向切换死区延时 (NOP 循环数, ~2 µs @32 MHz) */
 #define HBRIDGE_DEADTIME_LOOPS    (64U)
@@ -119,8 +119,8 @@ extern uint16_t g_turn_inner_speed; /* 转弯内轮速度（默认 80）*/
  *  蜂鸣器配置（有源蜂鸣器，高电平响，用于标定提示）
  * ============================================================ */
 
-#define BUZZER_PORT  GPIOA
-#define BUZZER_PIN   DL_GPIO_PIN_2
+#define BUZZER_PORT  GPIOB
+#define BUZZER_PIN   DL_GPIO_PIN_17
 
 /* ============================================================
  *  运行时特性开关

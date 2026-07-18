@@ -49,10 +49,10 @@ public:
      * @param sum_error_limit_n 积分限幅下限 (仅位置式有效, NAN=不限)
      * @param output_limit_p    输出限幅上限 (NAN=不限)
      * @param output_limit_n    输出限幅下限 (NAN=不限)
-     * @param deriv_lpf_alpha   导数低通滤波系数 (0~1, 0=无滤波, 默认 0.5)
-     * @param output_decay      输出衰减系数 (0~1, 1=不衰减, 默认 0.999)
+     * @param deriv_lpf_alpha   导数低通滤波系数 (仅增量式有效, 0~1, 0=无滤波, 默认 0.5)
+     * @param output_decay      输出衰减系数 (仅增量式有效, 0~1, 1=不衰减, 默认 0.999)
      *                         每周期 output*=decay, 消除弯道后残留偏航
-     * @param max_delta         增量步长限幅 (NAN=不限幅)
+     * @param max_delta         增量步长限幅 (仅增量式有效, NAN=不限幅)
      * */
     PID(const Type type, const float kp, const float ki, const float kd,
         const float sum_error_limit_p = NAN, const float sum_error_limit_n = NAN,

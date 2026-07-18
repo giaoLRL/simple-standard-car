@@ -9,6 +9,9 @@ ESP32 模拟 JDY-23 的 BLE GATT, 小程序和 MCU 固件零改动:
   Characteristic UUID: 0000FFE1-0000-1000-8000-00805F9B34FB
   设备名:             JDY-23
 
+v2.0: 增大缓冲区以容纳完整二进制遥测帧 (54 字节 + 余量),
+      改用 gatts_notify 替代 gatts_indicate 提高实时性
+
 硬件接线:
   ESP32 GPIO16 (RX) ← MSPM0 PA10 (UART0 TX)
   ESP32 GPIO17 (TX) → MSPM0 PA11 (UART0 RX)
@@ -51,6 +54,11 @@ _LED_OFF  = const(1)
 
 _HEARTBEAT_MS = const(5000)
 _LOOP_DELAY_MS = const(5)
+
+# 增大缓冲区以容纳完整二进制帧 (54 字节 + 余量)
+_BUF_SIZE      = const(128)
+_FLUSH_MS      = const(200)
+_DISCARD_MS    = const(500)
 
 
 def _ts():
@@ -117,8 +125,7 @@ class JDYBleBridge:
             ((_CHR_UUID,
               bluetooth.FLAG_WRITE |
               bluetooth.FLAG_WRITE_NO_RESPONSE |
-              bluetooth.FLAG_NOTIFY |
-              bluetooth.FLAG_INDICATE,
+              bluetooth.FLAG_NOTIFY,
               ((bluetooth.UUID(0x2902), bluetooth.FLAG_READ | bluetooth.FLAG_WRITE),),
             ),),
         )
@@ -139,7 +146,7 @@ class JDYBleBridge:
             rx=Pin(_UART_RX),
         )
 
-        self._buf = bytearray(64)
+        self._buf = bytearray(_BUF_SIZE)
         self._buf_len = 0
         self._last_flush = time.ticks_ms()
 
@@ -261,7 +268,7 @@ class JDYBleBridge:
 
                 n = self._uart.any()
                 if n > 0:
-                    space = 60 - self._buf_len
+                    space = _BUF_SIZE - self._buf_len
                     if n > space:
                         n = space
                     chunk = self._uart.read(n)
@@ -274,9 +281,9 @@ class JDYBleBridge:
 
                 if self._buf_len > 0:
                     flush = False
-                    if self._buf_len >= 60:
+                    if self._buf_len >= _BUF_SIZE:
                         flush = True
-                    elif time.ticks_diff(now, self._last_flush) >= 200:
+                    elif time.ticks_diff(now, self._last_flush) >= _FLUSH_MS:
                         flush = True
 
                     if flush:
@@ -284,7 +291,8 @@ class JDYBleBridge:
                             self._notify_attempts += 1
                             data = bytes(self._buf[:self._buf_len])
                             try:
-                                self._ble.gatts_indicate(
+                                # v2.0: 使用 notify 替代 indicate, 提高实时性
+                                self._ble.gatts_notify(
                                     self._conn_handle, self._chr_handle, data)
                                 self._notify_ok += 1
                                 self._tx_to_ble += self._buf_len
@@ -292,12 +300,12 @@ class JDYBleBridge:
                             except Exception as e:
                                 self._notify_fails += 1
                                 if self._notify_fails % 20 == 1:
-                                    print("{} indicate 异常 ({}次): {}".format(
+                                    print("{} notify 异常 ({}次): {}".format(
                                         _ts(), self._notify_fails, e))
                         self._buf_len = 0
                         self._last_flush = now
 
-                if self._buf_len > 0 and time.ticks_diff(now, self._last_flush) > 500:
+                if self._buf_len > 0 and time.ticks_diff(now, self._last_flush) > _DISCARD_MS:
                     print("{} UART 半包丢弃: {}B (CCCD={})".format(
                         _ts(), self._buf_len, "SUB" if self._cccd_seen else "NOSUB"))
                     self._buf_len = 0
@@ -333,7 +341,7 @@ class JDYBleBridge:
 if __name__ == "__main__":
     print("=" * 48)
     print("  ESP32 BLE-UART 透传桥")
-    print("  模拟 JDY-23 | MicroPython")
+    print("  模拟 JDY-23 | MicroPython v2.0")
     print("=" * 48)
     try:
         bridge = JDYBleBridge()

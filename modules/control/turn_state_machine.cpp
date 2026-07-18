@@ -45,10 +45,10 @@ void turn_fsm_init(void)
  * 转移条件:
  *   STRAIGHT → LOST:        line_found=false (优先判断, 防迟滞位残留误触发转弯)
  *   STRAIGHT → TURN_DELAY:  左侧3路或右侧3路全部见黑 (先直走再转)
- *   TURN_DELAY → TURN_LEFT:  延时到期且左侧3路见黑
- *   TURN_DELAY → TURN_RIGHT: 延时到期且右侧3路见黑
- *   TURN → STRAIGHT:        中心探头先丢线后重新检测到线 (主条件)
- *                           或中心持续在线 150ms (备选, 需先丢线)
+ *   TURN_DELAY → TURN_LEFT:  延时到期, 按 STRAIGHT 阶段预设的 s_turn_pending 执行
+ *   TURN_DELAY → TURN_RIGHT: 同上, TURN_DELAY 阶段不重新判断左右
+ *   TURN → STRAIGHT:        主条件: 中心丢线后重新在线 (exit on re-capture)
+ *                           备选: 中心持续在线 150ms (仅当曾丢线后在线才生效)
  *   TURN → LOST:            超时 (TURN_TIMEOUT_MS 内未退出)
  *   LOST → STRAIGHT:       连续 3 周期检测到线 (消抖, 防噪声误恢复)
  *
@@ -93,21 +93,23 @@ void turn_fsm_update(uint8_t digital, bool line_found, uint32_t now_ms)
 
         case TurnState::TURN_LEFT:
         case TurnState::TURN_RIGHT:
-            /* 主退出条件: 中心探头先丢线后重新检测到线 */
+            /* 记录中心是否曾经丢线 */
             if ((digital & CENTER_MASK) == 0) {
-                s_center_lost = true;   /* 中心探头曾经丢线 */
-                s_center_stable_ct = 0; /* 复位备选计数 */
+                s_center_lost = true;
+                s_center_stable_ct = 0;
             }
 
-            /* 备选退出条件: 中心探头持续在线 (防止几何结构导致 FSM 卡死) */
+            /* 中心在线计数 (用于备选退出) */
             if ((digital & CENTER_MASK) != 0) {
                 s_center_stable_ct++;
             } else {
                 s_center_stable_ct = 0;
             }
 
-            /* 转弯退出: 必须 center_lost 先置位, 防止中心从未丢线就提前退出。
-             *   主条件: 中心丢线→重新捕获; 备选: 持续在线超时 (防卡死)。*/
+            /* 转弯退出:
+             *   主条件: 中心丢线后重新在线 → 立即退出
+             *   备选: 中心持续在线超时 (需先丢线, 仅中心从未完全脱线时触发)
+             *   注意: 中心从未丢线时备选条件不生效, 依赖 2s 超时进入 LOST */
             if ((s_center_lost && (digital & CENTER_MASK) != 0) ||
                 (s_center_lost && s_center_stable_ct >= TURN_EXIT_CENTER_COUNT)) {
                 s_turn_state  = TurnState::STRAIGHT;   /* 退出转弯 */

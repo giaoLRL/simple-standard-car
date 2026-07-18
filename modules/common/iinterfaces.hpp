@@ -75,9 +75,9 @@ public:
     virtual bool get_normalized(uint16_t *result) const = 0;
 
     /*
-     * 获取原始模拟量（ADC 原始值）
+     * 获取原始模拟量（ADC 原始值，不依赖校准状态）
      *   result: 8 元素数组
-     *   返回: true = 校准已完成
+     *   返回: true = 数据有效
      */
     virtual bool get_analog(uint16_t *result) const = 0;
 };
