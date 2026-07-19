@@ -148,16 +148,24 @@ void uart_debug_send(const char *str)
 
 void uart_debug_printf(const char *format, ...)
 {
-    char buf[640];
-    va_list args;
+    /*
+     * 静态缓冲，避免在调用链较深时被临时压栈。之前 640 字节栈缓冲在主循环
+     * 内触发 proto_send_hello 且 UART/编码器中断嵌套时，导致总栈使用超过
+     * 1024 字节默认栈大小，发生 HardFault 卡死。
+     */
+    static char buf[640];
+    int         len;
+    va_list     args;
+
     va_start(args, format);
-    int len = vsnprintf(buf, sizeof(buf), format, args);
+    len = vsnprintf(buf, sizeof(buf), format, args);
     va_end(args);
 
-    if (len < 0) return;
-
-    for (int i = 0; i < len && i < (int)sizeof(buf) - 1; i++) {
-        uart_debug_send_char(buf[i]);
+    if (len > 0) {
+        if (len >= (int)sizeof(buf)) {
+            len = (int)sizeof(buf) - 1;
+        }
+        uart_debug_send(buf);
     }
 }
 
