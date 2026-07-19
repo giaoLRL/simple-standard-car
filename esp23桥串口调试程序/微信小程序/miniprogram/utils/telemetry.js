@@ -1,7 +1,8 @@
 const LOG_KEY = 'carTelemetrySessionV2';
 const CONFIG_KEY = 'carControlConfigV2';
 const MAX_RECORDS = 18000;
-const HELLO_TIMEOUT = 3000;
+const HELLO_TIMEOUT = 15000;
+const HELLO_RETRY_MS = 2000;
 
 function finiteNumber(value, integer) {
   const number = integer ? parseInt(value, 10) : parseFloat(value);
@@ -55,13 +56,18 @@ const LEGACY_STATES = ['直道', '入弯', '弯中', '出弯', '丢线', '保留
  *  14      uint8      digital
  *  15      uint16[8]  normal (16 bytes)
  *  31      uint16[8]  analog (16 bytes)
- *  Total: 47 bytes
+ *  47      int16      left_rpm   (ENABLE_ENCODER=1 时存在)
+ *  49      int16      right_rpm  (ENABLE_ENCODER=1 时存在)
+ *  Total: 47 bytes (无编码器) 或 51 bytes (有编码器)
  * ============================================================ */
-const TLM_PAYLOAD_SIZE = 47;
+const TLM_PAYLOAD_SIZE_MIN = 47;
+const TLM_PAYLOAD_SIZE     = 51;  /* 含编码器字段 */
 
 function parseBinaryTlmPayload(buffer, byteOffset) {
-  const dv = new DataView(buffer.buffer, buffer.byteOffset + byteOffset, TLM_PAYLOAD_SIZE);
-  return {
+  const payloadLen = buffer.length - byteOffset;
+  const dvLen = Math.min(payloadLen, TLM_PAYLOAD_SIZE);
+  const dv = new DataView(buffer.buffer, buffer.byteOffset + byteOffset, dvLen);
+  const result = {
     seq:       dv.getUint16(0, true),
     tick:      dv.getUint32(2, true),
     state:     dv.getUint8(6),
@@ -79,6 +85,12 @@ function parseBinaryTlmPayload(buffer, byteOffset) {
                dv.getUint16(39, true), dv.getUint16(41, true),
                dv.getUint16(43, true), dv.getUint16(45, true)]
   };
+  /* 若载荷足够长 (51 字节)，读取编码器 RPM 字段 */
+  if (dvLen >= 51) {
+    result.leftRpm  = dv.getInt16(47, true);
+    result.rightRpm = dv.getInt16(49, true);
+  }
+  return result;
 }
 
 class TelemetryService {
@@ -101,6 +113,7 @@ class TelemetryService {
     this.hello = null;
     this.fieldMap = null;
     this.helloTimer = null;
+    this.helloRetryTimer = null;
     this.connectionMode = 'unknown';
     this.isBinary = false;  /* true = MCU 发送二进制遥测帧 */
     this.state = {
@@ -135,6 +148,9 @@ class TelemetryService {
   }
 
   subscribe(listener) {
+    this.init();
+    /* 兜底：真机调试下 app.js onLaunch 注册可能丢失，subscribe 时再注册一次 */
+    wx.onBLECharacteristicValueChange((res) => { this.onData(res.value); });
     this.listeners.push(listener);
     listener(this.state, 'snapshot');
     return () => {
@@ -291,7 +307,22 @@ class TelemetryService {
         this.connectionMode = 'wait_hello';
         this.isBinary = false;
         this.helloTimer = setTimeout(() => this.onHelloTimeout(), HELLO_TIMEOUT);
+        /* 定时重发 HELLO：标定期间 MCU 在阻塞中收不到，标定完后在
+         * proto_poll_commands 里处理。每 2 秒重发一次，确保不会遗漏。 */
+        this.helloRetryTimer = setInterval(() => {
+          if (this.connectionMode === 'wait_hello') {
+            this.sendCmd('HELLO');
+          } else {
+            clearInterval(this.helloRetryTimer);
+            this.helloRetryTimer = null;
+          }
+        }, HELLO_RETRY_MS);
         this.sendCmd('HELLO');
+        /* 在通知启用后注册回调（BLE 栈此时一定就绪）*/
+        wx.onBLECharacteristicValueChange((res) => {
+          if (res.deviceId === this.deviceId) this.onData(res.value);
+        });
+        console.log('[BLE] connected, sent HELLO');
         this.emit('connection');
         wx.showToast({ title: '已连接', icon: 'success' });
       },
@@ -313,6 +344,8 @@ class TelemetryService {
   }
 
   onHelloTimeout() {
+    console.log('[HELLO] timeout, fallback to legacy');
+    if (this.helloRetryTimer) { clearInterval(this.helloRetryTimer); this.helloRetryTimer = null; }
     if (this.connectionMode === 'wait_hello') {
       this.connectionMode = 'v2_legacy';
       this.state.debug = defaultDebugLegacy();
@@ -334,6 +367,7 @@ class TelemetryService {
     this.connectionMode = 'unknown';
     this.isBinary = false;
     if (this.helloTimer) { clearTimeout(this.helloTimer); this.helloTimer = null; }
+    if (this.helloRetryTimer) { clearInterval(this.helloRetryTimer); this.helloRetryTimer = null; }
     this.state.connected = false;
     this.state.connecting = false;
     this.state.packetRate = 0;
@@ -401,6 +435,8 @@ class TelemetryService {
    * ============================================================ */
   onData(buffer) {
     const bytes = new Uint8Array(buffer);
+    this.state.validPackets++;  /* 先计数再解析：收到即计数，UI 立即可见 */
+    console.log('[BLE] rx', bytes.length, 'bytes, first:', bytes[0]?.toString(16), bytes[1]?.toString(16));
 
     /* ---- 追加到文本缓冲区 (用于 HELLO / 命令 / 老版本遥测) ---- */
     for (let i = 0; i < bytes.length; i++) {
@@ -507,7 +543,7 @@ class TelemetryService {
 
   /* ---- 二进制遥测帧解析 ---- */
   parseBinaryTlm(payload) {
-    if (payload.length < TLM_PAYLOAD_SIZE) return this.invalidPacket();
+    if (payload.length < TLM_PAYLOAD_SIZE_MIN) return this.invalidPacket();
     const raw = parseBinaryTlmPayload(payload, 0);
 
     const flags = raw.flags || 0;
@@ -525,19 +561,24 @@ class TelemetryService {
         : ('状态' + raw.state),
       flags,
       digital,
-      pos: raw.error,       /* 兼容旧界面：pos 显示 PID 误差 */
+      pos: raw.error,
       err: raw.error,
       error: raw.error,
       leftPwm: raw.leftPwm,
       rightPwm: raw.rightPwm,
       mode: (flags & 4) ? '停车' : ((flags & 2) ? '手动' : '循迹'),
       stopped: !!(flags & 4),
+      speedLoop: !(flags & 8),     /* bit3=0 → 速度环开 */
+      dirLoop: !(flags & 16),      /* bit4=0 → 方向环开 */
       /* 归一化值 */
       n0: raw.normal[0], n1: raw.normal[1], n2: raw.normal[2], n3: raw.normal[3],
       n4: raw.normal[4], n5: raw.normal[5], n6: raw.normal[6], n7: raw.normal[7],
       /* 模拟量 */
       a0: raw.analog[0], a1: raw.analog[1], a2: raw.analog[2], a3: raw.analog[3],
       a4: raw.analog[4], a5: raw.analog[5], a6: raw.analog[6], a7: raw.analog[7],
+      /* 编码器 RPM（仅当载荷包含该字段时） */
+      leftRpm: raw.leftRpm !== undefined ? raw.leftRpm : 0,
+      rightRpm: raw.rightRpm !== undefined ? raw.rightRpm : 0,
       /* 缺省字段 (保持兼容) */
       raw: digital & 0x1F,
       rawHex: '0x' + ('0' + (digital & 0x1F).toString(16).toUpperCase()).slice(-2),
@@ -550,10 +591,13 @@ class TelemetryService {
 
   parseHello(line) {
     try {
-      const commaIdx = line.indexOf(',', 7);
-      const jsonStr = line.slice(commaIdx + 1);
+      /* $HELLO,<version>,<json> — 找到第一个 '{' 作为 JSON 起始，比数逗号更可靠 */
+      const braceIdx = line.indexOf('{');
+      if (braceIdx < 0) throw new Error('no JSON brace');
+      const jsonStr = line.slice(braceIdx);
       const data = JSON.parse(jsonStr);
       this.hello = data;
+      console.log('[HELLO] ok, bin:', data.bin, 'encoders:', data.encoders, 'sensors:', data.sensors);
 
       /* 检查是否二进制模式 */
       this.isBinary = !!(data.bin);
@@ -564,6 +608,7 @@ class TelemetryService {
       }
       this.connectionMode = this.isBinary ? 'v4_binary' : 'v3_adaptive';
       if (this.helloTimer) { clearTimeout(this.helloTimer); this.helloTimer = null; }
+      if (this.helloRetryTimer) { clearInterval(this.helloRetryTimer); this.helloRetryTimer = null; }
       this.state.debug = this.isBinary ? defaultDebugV3() : defaultDebugV3();
       this.state.debug.protocol = this.isBinary ? 4 : 3;
       if (this.hello.states) {
@@ -571,7 +616,7 @@ class TelemetryService {
       }
       this.emit('hello_ready');
     } catch (e) {
-      console.warn('HELLO 解析失败', e);
+      console.warn('[HELLO] parse fail, line:', line.substring(0, 80), 'err:', e);
     }
   }
 
@@ -700,6 +745,10 @@ class TelemetryService {
     this.state.packetRate = this.rateWindow.length > 1
       ? ((this.rateWindow.length - 1) * 1000 / (now - this.rateWindow[0])) : 0;
     this.state.validPackets++;
+    if (this.state.validPackets <= 3) {
+      console.log('[TLM] packet', debug.protocol, 'seq:', debug.seq, 'state:', debug.stateName,
+        'lPwm:', debug.leftPwm, 'rPwm:', debug.rightPwm);
+    }
     this.state.debug = debug;
     this.state.history.push(Object.assign({}, debug));
     if (this.state.history.length > 200) this.state.history.shift();
@@ -730,6 +779,7 @@ class TelemetryService {
       straight_kp: 'PK_straight_kp', straight_ki: 'PK_straight_ki', straight_kd: 'PK_straight_kd',
       curve_kp: 'PK_curve_kp', sharp_kp: 'PK_sharp_kp', output_max: 'PK_output_max',
       speed_kp: 'SK_kp', speed_ki: 'SK_ki', speed_imax: 'SK_imax', speed_corr_max: 'SK_corr_max',
+      speedKp: 'SKP', speedKi: 'SKI', speedKd: 'SKD',
       gyro_kp: 'GK_kp', gyro_ki: 'GK_ki', gyro_kd: 'GK_kd',
       gyro_trim_max: 'GK_trim_max', gyro_deadzone: 'GK_deadzone', gyro_ratelimit: 'GK_ratelimit',
       straight_pwm: 'CFG_straight', curve_pwm: 'CFG_curve', lost_diff: 'CFG_lost_diff'

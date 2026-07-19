@@ -52,18 +52,22 @@ function buildCharts(uiConfig) {
     charts.gyro = { label: '陀螺仪', min: -360, max: 360, series: gyroSeries };
   }
 
-  if (uiConfig.hasEncoder && tlm.indexOf('speedL') >= 0) {
-    var speedSeries = [];
-    if (tlm.indexOf('speedL') >= 0) speedSeries.push(['speedL', COLORS[0]]);
-    if (tlm.indexOf('speedR') >= 0) speedSeries.push(['speedR', COLORS[1]]);
-    if (tlm.indexOf('speedAvg') >= 0) speedSeries.push(['speedAvg', COLORS[2]]);
-    if (speedSeries.length) {
-      charts.speed = { label: '车速 mm/s', min: -2000, max: 2000, series: speedSeries };
+  if (uiConfig.hasEncoder) {
+    var rpmSeries = [];
+    if (tlm.indexOf('leftRpm') >= 0) rpmSeries.push(['leftRpm', COLORS[0]]);
+    if (tlm.indexOf('rightRpm') >= 0) rpmSeries.push(['rightRpm', COLORS[1]]);
+    if (!rpmSeries.length && tlm.indexOf('speedL') >= 0) {
+      if (tlm.indexOf('speedL') >= 0) rpmSeries.push(['speedL', COLORS[0]]);
+      if (tlm.indexOf('speedR') >= 0) rpmSeries.push(['speedR', COLORS[1]]);
+    }
+    if (rpmSeries.length) {
+      charts.rpm = { label: '编码器 RPM', min: -500, max: 500, series: rpmSeries };
     }
   }
 
-  if (tlm.indexOf('err') >= 0) {
-    charts.err = { label: '偏差', min: -500, max: 500, series: [['err', COLORS[0]]] };
+  if (tlm.indexOf('error') >= 0 || tlm.indexOf('err') >= 0) {
+    var errField = tlm.indexOf('error') >= 0 ? 'error' : 'err';
+    charts.err = { label: '循迹偏差', min: -500, max: 500, series: [[errField, COLORS[0]]] };
   }
 
   return charts;
@@ -71,8 +75,9 @@ function buildCharts(uiConfig) {
 
 function buildMetrics(debug, uiConfig) {
   var items = [];
-  var isV3 = telemetry.connectionMode === 'v3_adaptive';
+  var isV3 = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
   var sensorCount = uiConfig.sensorCount || 0;
+  var isBinary = telemetry.connectionMode === 'v4_binary';
 
   if (!isV3) {
     items = [
@@ -86,13 +91,25 @@ function buildMetrics(debug, uiConfig) {
     return items;
   }
 
-  items.push({ label: '协议', value: 'V3 · 自适应' });
+  items.push({ label: '协议', value: isBinary ? 'V4 · 二进制' : 'V3 · 自适应' });
   if (debug.seq !== undefined) items.push({ label: '序号', value: debug.seq });
   if (debug.tick !== undefined) items.push({ label: '车端时钟', value: debug.tick + ' ms' });
   if (debug.state !== undefined) items.push({ label: '状态', value: debug.state + ' · ' + (debug.stateName || '') });
   if (debug.mode !== undefined) items.push({ label: '模式', value: debug.mode });
   if (debug.err !== undefined) items.push({ label: '偏差', value: debug.err });
   if (debug.pos !== undefined) items.push({ label: '位置', value: debug.pos });
+
+  /* v4_binary 额外指标 */
+  if (isBinary) {
+    if (debug.leftPwm !== undefined) items.push({ label: '左 PWM', value: debug.leftPwm });
+    if (debug.rightPwm !== undefined) items.push({ label: '右 PWM', value: debug.rightPwm });
+    if (uiConfig.hasEncoder) {
+      if (debug.leftRpm !== undefined) items.push({ label: '左轮 RPM', value: debug.leftRpm });
+      if (debug.rightRpm !== undefined) items.push({ label: '右轮 RPM', value: debug.rightRpm });
+    }
+    items.push({ label: '速度环', value: debug.speedLoop ? '开' : '关' });
+    items.push({ label: '方向环', value: debug.dirLoop ? '开' : '关' });
+  }
 
   return items;
 }
@@ -139,7 +156,7 @@ Page({
     this.unsubscribe = telemetry.subscribe(function (state) {
       var d = state.debug;
       var uiConfig = telemetry.getUiConfig();
-      var isV3 = telemetry.connectionMode === 'v3_adaptive';
+      var isV3 = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
       var charts = buildCharts(uiConfig);
       var chartKeys = Object.keys(charts);
       if (!self.data.chartKey || !charts[self.data.chartKey]) {
@@ -153,7 +170,7 @@ Page({
         charts: charts, chartKeys: chartKeys,
         metrics: buildMetrics(d, uiConfig),
         sensors: buildSensors(d, uiConfig, isV3),
-        helloReceived: isV3
+        helloReceived: isV3 || telemetry.connectionMode === 'v4_binary'
       }, function () {
         if (self.data.chartKey && charts[self.data.chartKey]) {
           self.setData({

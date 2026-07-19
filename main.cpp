@@ -41,6 +41,11 @@
 #include "modules/motor/motor.hpp"
 #include "modules/pid/pid.hpp"
 #include "modules/common/uart_protocol.hpp"
+#include "modules/common/uart_debug.hpp"
+#if ENABLE_ENCODER
+#include "modules/encoder/encoder.hpp"
+#include "modules/speed_pid/speed_pid.hpp"
+#endif
 
 /* ============================================================
  *  全局可调参数（外部可通过串口 / 蓝牙修改）
@@ -61,6 +66,25 @@ PID g_pid(PID::position_type, 0.05f, 0.0000f, 0.13f,
           NAN,    /* output_decay — 位置式不使用 */
           NAN);   /* max_delta — 位置式不使用 */
 
+#if ENABLE_ENCODER
+/* 速度环 PID — 增量式，左右轮各独立
+ *
+ *   速度环跟踪方向环输出的目标速度，输出 PWM 驱动电机。
+ *   增量式特性：输出平滑，切换目标速度时无跳变；
+ *   内置 output_decay=0.999 防止积分饱和。 */
+PID g_spid_left(PID::delta_type, SPEED_KP_DEFAULT, SPEED_KI_DEFAULT, SPEED_KD_DEFAULT,
+                NAN, NAN,                                /* sum_error 限幅 — 增量式不使用 */
+                SPEED_OUT_LIMIT, -SPEED_OUT_LIMIT,       /* 输出限幅 ±PWM_MAX */
+                0.5f,    /* deriv_lpf_alpha */
+                0.999f,  /* output_decay */
+                SPEED_MAX_DELTA);                        /* 单步增量限幅 */
+
+PID g_spid_right(PID::delta_type, SPEED_KP_DEFAULT, SPEED_KI_DEFAULT, SPEED_KD_DEFAULT,
+                 NAN, NAN,
+                 SPEED_OUT_LIMIT, -SPEED_OUT_LIMIT,
+                 0.5f, 0.999f, SPEED_MAX_DELTA);
+#endif
+
 /* ============================================================
  *  运行时特性开关
  * ============================================================ */
@@ -73,12 +97,25 @@ bool g_motor_on      = true;
  * ============================================================ */
 
 volatile int32_t  g_dbg_error       = 0;      /* 线偏差 */
-volatile int16_t  g_dbg_left_cmd    = 0;      /* 左轮指令 */
-volatile int16_t  g_dbg_right_cmd   = 0;      /* 右轮指令 */
+volatile int16_t  g_dbg_left_cmd    = 0;      /* 左轮最终 PWM 指令 */
+volatile int16_t  g_dbg_right_cmd   = 0;      /* 右轮最终 PWM 指令 */
+volatile int32_t  g_dbg_correction  = 0;      /* 方向 PID 修正量 */
 volatile bool     g_dbg_line_found  = false;  /* 是否检测到线 */
 volatile uint8_t  g_dbg_digital     = 0;      /* 数字量（8 通道二值化）*/
 volatile uint16_t g_dbg_normal[SENSOR_COUNT]; /* 归一化值 */
 volatile uint16_t g_dbg_analog[SENSOR_COUNT]; /* 原始模拟量 */
+volatile uint32_t g_dbg_loop_cnt    = 0;      /* 主循环迭代计数（心跳）*/
+
+#if ENABLE_ENCODER
+volatile float   g_dbg_left_rpm  = 0.0f;   /* 左轮实际转速 RPM */
+volatile float   g_dbg_right_rpm = 0.0f;   /* 右轮实际转速 RPM */
+volatile int16_t g_dbg_left_target  = 0;   /* 速度环目标左轮 (PWM 量纲) */
+volatile int16_t g_dbg_right_target = 0;   /* 速度环目标右轮 (PWM 量纲) */
+volatile float   g_dbg_spd_err_l = 0.0f;   /* 速度环左轮误差 (RPM) */
+volatile float   g_dbg_spd_err_r = 0.0f;   /* 速度环右轮误差 (RPM) */
+volatile float   g_dbg_spd_out_l = 0.0f;   /* 速度环左轮输出 (累积) */
+volatile float   g_dbg_spd_out_r = 0.0f;   /* 速度环右轮输出 (累积) */
+#endif
 
 /* ============================================================
  *  差速转向计算
@@ -106,6 +143,60 @@ volatile uint16_t g_dbg_analog[SENSOR_COUNT]; /* 原始模拟量 */
  * 差速转向计算 —— 已提取至 modules/control/steering.hpp
  * ============================================================ */
 
+#if ENABLE_ENCODER
+/*
+ * 速度环微调：方向环输出为基准 PWM，速度环在此基础上 ± 微调。
+ * 不替换方向环差速——保留左右轮差速，只调整体幅值。
+ */
+static void speed_loop_trim(int16_t *left_cmd, int16_t *right_cmd)
+{
+    if (!g_speed_loop_on) return;
+
+    int16_t base_l = *left_cmd;
+    int16_t base_r = *right_cmd;
+    int16_t sign_l = (base_l >= 0) ? 1 : -1;
+    int16_t sign_r = (base_r >= 0) ? 1 : -1;
+
+    float target_l = (float)(sign_l * base_l) * 400.0f / (float)PWM_MAX;
+    float target_r = (float)(sign_r * base_r) * 400.0f / (float)PWM_MAX;
+
+    g_dbg_left_target  = base_l;
+    g_dbg_right_target = base_r;
+
+    float actual_l = g_enc_left.get_speed_rpm();
+    float actual_r = g_enc_right.get_speed_rpm();
+    if (actual_l < 0.0f) actual_l = -actual_l;
+    if (actual_r < 0.0f) actual_r = -actual_r;
+
+    float err_l = actual_l - target_l;
+    float err_r = actual_r - target_r;
+    g_dbg_spd_err_l = err_l;
+    g_dbg_spd_err_r = err_r;
+
+    g_spid_left.reset_output();
+    g_spid_right.reset_output();
+    int16_t trim_l = round_to_i32(g_spid_left.calc(err_l));
+    int16_t trim_r = round_to_i32(g_spid_right.calc(err_r));
+
+    int16_t max_l = (base_l >= 0 ? base_l : -base_l) / 2;
+    int16_t max_r = (base_r >= 0 ? base_r : -base_r) / 2;
+    if (trim_l >  max_l) trim_l =  max_l;
+    if (trim_l < -max_l) trim_l = -max_l;
+    if (trim_r >  max_r) trim_r =  max_r;
+    if (trim_r < -max_r) trim_r = -max_r;
+
+    *left_cmd  = base_l + trim_l;
+    *right_cmd = base_r + trim_r;
+    if (*left_cmd  >  PWM_MAX) *left_cmd  =  PWM_MAX;
+    if (*left_cmd  < -PWM_MAX) *left_cmd  = -PWM_MAX;
+    if (*right_cmd >  PWM_MAX) *right_cmd =  PWM_MAX;
+    if (*right_cmd < -PWM_MAX) *right_cmd = -PWM_MAX;
+
+    g_dbg_spd_out_l = (float)trim_l;
+    g_dbg_spd_out_r = (float)trim_r;
+}
+#endif
+
 /*
  * 传感器误差死区: |error| < 此值时 PID 输入置零,
  * 减少直线段电机微振和功耗。单位为传感器位置量纲 (千分位)。
@@ -132,10 +223,32 @@ int main(void)
     g_motor.init();
     buzzer_init();
     turn_fsm_init();
+    uart_debug_init(9600);  /* 必须调用：配置 UART1 波特率 + 使能 RX 中断 */
     proto_init();
+
+#if ENABLE_ENCODER
+    /* 编码器初始化（GPIO 中断已在 Encoder::init 内使能）*/
+    g_enc_left.init();
+    g_enc_right.init();
+
+    /* 编码器方向初始值（来自 config.hpp 编译期配置）*/
+    g_enc_left.reversed_  = g_enc_left_rev;
+    g_enc_right.reversed_ = g_enc_right_rev;
+
+    /* 中断优先级：按方案 3.4 分配
+     *   GROUP1（编码器）已在 Encoder::init 中设为 0（最高）
+     *   DMA_INT → 1, UART1 → 2 */
+    NVIC_SetPriority(DMA_INT_IRQn, 1);
+    NVIC_SetPriority(UART1_INT_IRQn, 2);
+#endif
 
     /* 启动短响：确认当前固件已运行，随后进入 PB21 白底标定等待。 */
     buzzer_beep(80U);
+
+    /* 在标定前主动发 HELLO：小程序连接后只有 3 秒超时窗口，
+     * 若等到标定完成（需按键两次）才发，大概率超时降级为 V2。
+     * UART 已配好，提前发送确保小程序在 3 秒内收到握手。 */
+    proto_send_hello();
 
     /* ===== 3. 传感器黑白双标定 + 系数预计算 ===== */
     /*
@@ -158,19 +271,54 @@ int main(void)
      * 标定成功后, 两轮同时正转 500ms。观察小车:
      *   - 前进 ✓ → 方向正确
      *   - 后退   → 两轮接线都反了, config.hpp 中两个 REVERSED 都置 1
-     *   - 原地转 → 某一轮方向反了, 单独置位该轮的 REVERSED 宏 */
+     *   - 原地转 → 某一轮方向反了, 单独置位该轮的 REVERSED 宏
+     *
+     * 同时检查编码器：如果 500ms 后 pulse_count 仍为 0，
+     * 说明编码器中断未触发（接线/供电/引脚配置问题）。 */
     delay_cycles(800U * (CPUCLK_FREQ / 1000U));
+#if ENABLE_ENCODER
+    int32_t enc_ticks_before_l = g_enc_left.get_ticks();
+    int32_t enc_ticks_before_r = g_enc_right.get_ticks();
+#endif
     g_motor.set_speed(300, 300);
     {
         uint32_t t0 = timebase_millis();
         while ((int32_t)(timebase_millis() - t0) < 500) { __NOP(); }
     }
     g_motor.stop();
+#if ENABLE_ENCODER
+    int32_t enc_ticks_after_l = g_enc_left.get_ticks();
+    int32_t enc_ticks_after_r = g_enc_right.get_ticks();
+    int32_t enc_delta_l = enc_ticks_after_l - enc_ticks_before_l;
+    int32_t enc_delta_r = enc_ticks_after_r - enc_ticks_before_r;
+    /* 编码器自检：500ms 正转至少应有若干脉冲。若无，长响 3 声报警。 */
+    if (enc_delta_l == 0 || enc_delta_r == 0) {
+        for (int beep = 0; beep < 3; beep++) {
+            buzzer_beep(500U);
+            delay_cycles(300U * (CPUCLK_FREQ / 1000U));
+        }
+    }
+#endif
     buzzer_beep(50U);
+
+    /* 标定/自检完成后主动发 HELLO：小程序在标定期间发的 HELLO
+     * 因 calibrate() 阻塞未能处理，此处补发确保小程序识别 MCU 已就绪。 */
+    proto_send_hello();
 
     /* ===== 4. 主循环 ===== */
     uint32_t next_control_ms = timebase_millis();
     while (1) {
+        g_dbg_loop_cnt++;  /* 心跳：每次主循环迭代 +1 */
+
+        /* ---- 心跳诊断：开启速度环时每100次主循环短响 ---- */
+#if ENABLE_ENCODER
+        if (g_speed_loop_on && (g_dbg_loop_cnt % 100U) == 0U) {
+            buzzer_on();
+            for (volatile uint32_t bz = 0; bz < (CPUCLK_FREQ / 1000U * 5U); bz++) { __NOP(); }
+            buzzer_off();
+        }
+#endif
+
         /* ---- 传感器任务（参照 No_Mcu_Ganv_Sensor_Task_Without_tick）---- */
         bool line_found = g_line_sensor.update();
         int32_t error   = g_line_sensor.get_error();
@@ -182,6 +330,15 @@ int main(void)
 
         g_dbg_error      = error;
         g_dbg_line_found = line_found;
+
+#if ENABLE_ENCODER
+        /* 编码器超时检测 + RPM 更新（实际脉冲由 GPIO ISR 异步处理）*/
+        g_enc_left.update();
+        g_enc_right.update();
+
+        g_dbg_left_rpm  = g_enc_left.get_speed_rpm();
+        g_dbg_right_rpm = g_enc_right.get_speed_rpm();
+#endif
 
         /* 遥测发送频率控制: 每帧 ~150 字节 @ 9600 baud ≈ 150ms,
          * 阻塞期间无控制，频率过高会导致小车失控。
@@ -220,8 +377,7 @@ int main(void)
              *   最终: left = base + correction, right = base - correction
              */
 
-            /* 死区: 微小误差不驱动 PID, 减少电机微振
-             *   修复: 用 >=/<= 替代 >/<, 使实际死区匹配常量名 (|error|<=5) */
+            /* 死区: 微小误差不驱动 PID, 减少电机微振 */
             int32_t pid_input = error;
             if (pid_input >= -SENSOR_ERROR_DEADBAND &&
                 pid_input <=  SENSOR_ERROR_DEADBAND) {
@@ -231,19 +387,29 @@ int main(void)
             /* 传入 -error: 对齐 PID 输出与转向修正的符号 */
             int32_t correction = round_to_i32(
                 g_pid.calc((float)(-pid_input)));
+            g_dbg_correction = correction;
 
-            /* correction 钳位 ±g_base_speed: 保证 raw_left/right 不超 PWM_MAX,
-             *   从而 apply_diff_steering 永不触发等比例缩放,
-             *   且内轮不会反转 (最低 0 = 停转, 已是极限差速)。 */
+#if ENABLE_ENCODER
+            /* DEN=0 → 方向环 bypass，correction 强制归零 */
+            if (!g_dir_pid_on) {
+                correction = 0;
+            }
+#endif
+
+            /* correction 钳位 ±g_base_speed */
             if (correction >  (int32_t)g_base_speed) correction =  (int32_t)g_base_speed;
             if (correction < -(int32_t)g_base_speed) correction = -(int32_t)g_base_speed;
 
+            int32_t raw_left  = (int32_t)g_base_speed + correction;
+            int32_t raw_right = (int32_t)g_base_speed - correction;
+
+            /* 等比例饱和：保持转向曲率 */
             int16_t left_cmd, right_cmd;
-            apply_diff_steering(
-                (int32_t)g_base_speed + correction,
-                (int32_t)g_base_speed - correction,
-                &left_cmd, &right_cmd,
-                PWM_MAX);
+            apply_diff_steering(raw_left, raw_right, &left_cmd, &right_cmd, PWM_MAX);
+
+#if ENABLE_ENCODER
+            speed_loop_trim(&left_cmd, &right_cmd);
+#endif
 
             g_motor.set_speed(left_cmd, right_cmd);
             buzzer_off();
@@ -255,8 +421,18 @@ int main(void)
              * 重置 PID 状态 — 转弯期间 PID 不被调用，旧状态已失效
              * 重新进入直线时 PID 从零开始，第一个 calc() 产生合理的首次响应 */
             g_pid.reset();
+#if ENABLE_ENCODER
+            g_spid_left.reset();
+            g_spid_right.reset();
+            g_spd_need_warmstart = true;
+#endif
             int16_t left_cmd, right_cmd;
             turn_fsm_get_motor_commands(&left_cmd, &right_cmd);
+
+#if ENABLE_ENCODER
+            speed_loop_trim(&left_cmd, &right_cmd);
+#endif
+
             g_motor.set_speed(left_cmd, right_cmd);
             buzzer_off();
 
@@ -265,6 +441,11 @@ int main(void)
         } else {
             /* LOST：丢线或转弯超时 → 停车 + 蜂鸣器 1 Hz 间歇报警 */
             g_pid.reset();
+#if ENABLE_ENCODER
+            g_spid_left.reset();
+            g_spid_right.reset();
+            g_spd_need_warmstart = true;
+#endif
             g_motor.stop();
             g_dbg_left_cmd  = 0;
             g_dbg_right_cmd = 0;

@@ -1,0 +1,16 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "新建的循迹小车",
+      "type": "ccs-debug",
+      "request": "launch",
+      "projectInfo": {
+        "name": "新建的循迹小车",
+        "resourceId": "/新建的循迹小车"
+      }
+    }
+  ]
+}

@@ -34,12 +34,20 @@ function generatePanels(uiConfig) {
     if (controls.length) panels.push({ id: 'path_pid', name: '路径 PID', controls });
   }
 
-  if (params.straight_pwm !== undefined || params.curve_pwm !== undefined) {
+  if (params.chassis_pwm !== undefined || params.straight_pwm !== undefined || params.curve_pwm !== undefined) {
     const controls = [];
     if (params.straight_pwm !== undefined) controls.push({ key: 'straight_pwm', name: '直道 PWM', min: 0, max: pwmMax, step: 10, value: params.straight_pwm });
     if (params.curve_pwm !== undefined) controls.push({ key: 'curve_pwm', name: '弯道 PWM', min: 0, max: pwmMax, step: 10, value: params.curve_pwm });
     if (params.lost_diff !== undefined) controls.push({ key: 'lost_diff', name: '丢线差速', min: 50, max: pwmMax, step: 10, value: params.lost_diff });
     if (controls.length) panels.push({ id: 'chassis', name: '底盘配置', controls });
+  }
+
+  if (params.speedKp !== undefined || params.speedKi !== undefined || params.speedKd !== undefined) {
+    const controls = [];
+    if (params.speedKp !== undefined) controls.push({ key: 'speedKp', name: '速度 KP', min: 0, max: 2, step: 0.01, value: params.speedKp / 1000 });
+    if (params.speedKi !== undefined) controls.push({ key: 'speedKi', name: '速度 KI', min: 0, max: 0.2, step: 0.001, value: params.speedKi / 1000 });
+    if (params.speedKd !== undefined) controls.push({ key: 'speedKd', name: '速度 KD', min: 0, max: 0.5, step: 0.01, value: params.speedKd / 1000 });
+    if (controls.length) panels.push({ id: 'speed_pid', name: '速度 PID', controls });
   }
 
   return panels;
@@ -78,7 +86,7 @@ Page({
         config: state.config,
         hasEncoder: uiConfig.hasEncoder, hasGyro: uiConfig.hasGyro,
         canConfig: uiConfig.canConfig, canCalibrate: uiConfig.canCalibrate,
-        helloReceived: curMode === 'v3_adaptive'
+        helloReceived: curMode === 'v3_adaptive' || curMode === 'v4_binary'
       });
     }.bind(this));
   },

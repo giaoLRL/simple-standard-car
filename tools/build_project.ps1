@@ -53,6 +53,7 @@ $sources = @(
     @{ Source = "modules\common\uart_protocol.cpp"; Object = "uart_protocol.o" },
     @{ Source = "modules\common\config.cpp"; Object = "config.o" },
     @{ Source = "modules\control\turn_state_machine.cpp"; Object = "turn_state_machine.o" },
+    @{ Source = "modules\encoder\encoder.cpp"; Object = "encoder.o" },
     @{ Source = "modules\line_sensor\line_sensor.cpp"; Object = "line_sensor.o" },
     @{ Source = "modules\motor\motor.cpp"; Object = "motor.o" },
     @{ Source = (Join-Path $syscfgDir "ti_msp_dl_config.c"); Object = "ti_msp_dl_config.o" },

@@ -96,6 +96,12 @@ public:
     void reset_output() { output_ = 0.0f; }
 
     /**
+     * @brief 热启动：将累积输出预设为 feedforward 值，
+     *        避免增量式 PID 从 0 爬坡到目标值的漫长过渡期。
+     */
+    void warm_start(float initial_output) { output_ = initial_output; }
+
+    /**
      * @brief 重置全部动态状态 (模式切换或重新启动时调用)
      */
     void reset() {

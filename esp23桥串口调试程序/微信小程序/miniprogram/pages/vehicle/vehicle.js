@@ -76,7 +76,7 @@ Page({
     this.unsubscribe = telemetry.subscribe(function (state) {
       var debug = state.debug;
       var uiConfig = telemetry.getUiConfig();
-      var isV3 = telemetry.connectionMode === 'v3_adaptive';
+      var isV3 = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
       var wheelData;
       if (isV3) {
         wheelData = buildV3Wheels(debug, uiConfig);
@@ -126,7 +126,7 @@ Page({
         hasGyro: uiConfig.hasGyro, hasEncoder: uiConfig.hasEncoder,
         hasSensor: (uiConfig.sensorCount || 0) > 0,
         detailItems: detailItems,
-        helloReceived: isV3
+        helloReceived: isV3 || telemetry.connectionMode === 'v4_binary'
       });
     }.bind(this));
   },

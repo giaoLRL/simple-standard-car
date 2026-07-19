@@ -26,30 +26,30 @@ static volatile uint8_t tx_tail = 0;
  *  TX: 从 tx_ring 喂入 TX FIFO，缓冲区空时关闭 TX 中断
  *  RX: 从 RX FIFO 读入 rx_ring（唯一的写入者，无竞态）
  * ============================================================ */
-extern "C" void UART_0_INST_IRQHandler(void)
+extern "C" void UART_1_INST_IRQHandler(void)
 {
     /* ---- TX: 非阻塞发送，从环形缓冲区取数据写入 TX FIFO ---- */
-    if (DL_UART_Main_isTXFIFOEmpty(UART_0_INST)) {
+    if (DL_UART_Main_isTXFIFOEmpty(UART_1_INST)) {
         if (tx_head != tx_tail) {
-            DL_UART_Main_transmitData(UART_0_INST, (uint8_t)tx_ring[tx_tail]);
+            DL_UART_Main_transmitData(UART_1_INST, (uint8_t)tx_ring[tx_tail]);
             tx_tail = (tx_tail + 1) % TX_RING_SIZE;
         }
         if (tx_head == tx_tail) {
             /* 缓冲区已空，关闭 TX 中断避免空转 */
-            DL_UART_Main_disableInterrupt(UART_0_INST, DL_UART_MAIN_INTERRUPT_TX);
+            DL_UART_Main_disableInterrupt(UART_1_INST, DL_UART_MAIN_INTERRUPT_TX);
         }
     }
 
     /* ---- RX: ISR 是 rx_ring 的唯一写入者，无竞态 ---- */
-    if (!DL_UART_Main_isRXFIFOEmpty(UART_0_INST)) {
-        while (!DL_UART_Main_isRXFIFOEmpty(UART_0_INST)) {
+    if (!DL_UART_Main_isRXFIFOEmpty(UART_1_INST)) {
+        while (!DL_UART_Main_isRXFIFOEmpty(UART_1_INST)) {
             uint8_t next = (rx_head + 1) % RX_RING_SIZE;
             if (next != rx_tail) {
-                rx_ring[rx_head] = (char)DL_UART_Main_receiveData(UART_0_INST);
+                rx_ring[rx_head] = (char)DL_UART_Main_receiveData(UART_1_INST);
                 rx_head = next;
             } else {
                 /* Ring buffer 满，丢弃 */
-                DL_UART_Main_receiveData(UART_0_INST);
+                DL_UART_Main_receiveData(UART_1_INST);
             }
         }
     }
@@ -57,13 +57,14 @@ extern "C" void UART_0_INST_IRQHandler(void)
 
 void uart_debug_init(uint32_t baud_rate)
 {
-    uint32_t divisor = (CPUCLK_FREQ + (baud_rate * 8U)) / (baud_rate * 16U);
-    uint32_t ibrd = divisor >> 6;
-    uint32_t fbrd = divisor & 0x3F;
-    DL_UART_Main_setBaudRateDivisor(UART_0_INST, ibrd, fbrd);
+    /* 波特率由 SYSCFG_DL_UART_1_init() 已正确设置 (9600)，
+     * 此处只负责使能 RX 中断。不再调用 setBaudRateDivisor，
+     * 避免 uart_debug_init 的除数公式 (ibrd=divisor>>6) 与
+     * syscfg 生成的正确除数 (IBRD=208, FBRD=21) 冲突。 */
+    (void)baud_rate;  /* 保留参数兼容性，实际不再使用 */
 
-    DL_UART_Main_enableInterrupt(UART_0_INST, DL_UART_MAIN_INTERRUPT_RX);
-    NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
+    DL_UART_Main_enableInterrupt(UART_1_INST, DL_UART_MAIN_INTERRUPT_RX);
+    NVIC_EnableIRQ(UART_1_INST_INT_IRQN);
 
     /* TX 中断初始关闭，有数据要发时才打开 */
 }
@@ -127,7 +128,7 @@ void uart_debug_send_char(char c)
     __enable_irq();
 
     /* 触发 TX 中断：若 FIFO 已空则立即进入 ISR 发送 */
-    DL_UART_Main_enableInterrupt(UART_0_INST, DL_UART_MAIN_INTERRUPT_TX);
+    DL_UART_Main_enableInterrupt(UART_1_INST, DL_UART_MAIN_INTERRUPT_TX);
 }
 
 /* ---- 批量发送（缓冲区满时可能短暂自旋）---- */

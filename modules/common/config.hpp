@@ -105,8 +105,32 @@ extern uint16_t g_turn_inner_speed; /* 转弯内轮速度（默认 80）*/
  * ============================================================ */
 
 #ifndef ENABLE_ENCODER
-#define ENABLE_ENCODER 0                    /* 编码器速度闭环（默认关闭）*/
+#define ENABLE_ENCODER 1                    /* 编码器速度闭环（已启用）*/
 #endif
+
+/* ============================================================
+ *  速度环参数（编译期默认值）
+ * ============================================================ */
+
+#define SPEED_KP_DEFAULT      0.3f           /* 速度环 KP 默认值（降低防爆冲）*/
+#define SPEED_KI_DEFAULT      0.02f          /* 速度环 KI 默认值 */
+#define SPEED_KD_DEFAULT      0.0f           /* 速度环 KD 默认值 */
+#define SPEED_SUM_LIMIT       500.0f         /* 速度环积分限幅 */
+#define SPEED_OUT_LIMIT       1000.0f        /* 速度环输出限幅 (=PWM_MAX) */
+#define SPEED_MAX_DELTA       120.0f         /* 速度环单步增量限幅（≈12% PWM/周期）*/
+
+/* ============================================================
+ *  编码器参数（MG310 霍尔编码器）
+ * ============================================================ */
+
+#define ENC_CPR               13             /* 编码器线数（电机轴每转脉冲数）*/
+#define ENC_GEAR_RATIO        20             /* 减速比（1:20）*/
+#define WHEEL_DIAMETER_MM     48             /* 轮径（周长 ≈ 150.8mm）*/
+#define ENC_TIMEOUT_MS        100            /* T 法超时：超过此时间无脉冲 → 判定停车 */
+
+/* 编码器方向反转：正转时 RPM 读数为负 → 置 1（运行时可通过 ENCDIR 命令切换）*/
+#define ENC_LEFT_REVERSED      (0)
+#define ENC_RIGHT_REVERSED     (0)
 
 /* ============================================================
  *  用户按键配置（接地上拉输入，用于标定触发）
@@ -128,3 +152,14 @@ extern uint16_t g_turn_inner_speed; /* 转弯内轮速度（默认 80）*/
 
 extern bool g_line_track_on;    /* 循迹使能 */
 extern bool g_motor_on;         /* 电机使能 */
+
+#if ENABLE_ENCODER
+extern bool g_speed_loop_on;    /* 速度环使能（SEN 命令）*/
+extern bool g_dir_pid_on;       /* 方向环使能（DEN 命令，关闭后 correction=0）*/
+extern float g_speed_kp;        /* 速度环 KP */
+extern float g_speed_ki;        /* 速度环 KI */
+extern float g_speed_kd;        /* 速度环 KD */
+extern bool g_enc_left_rev;     /* 左编码器方向反转（运行时可切换）*/
+extern bool g_enc_right_rev;    /* 右编码器方向反转（运行时可切换）*/
+extern volatile bool g_spd_need_warmstart; /* 速度环需热启动（刚复位后首次进入）*/
+#endif

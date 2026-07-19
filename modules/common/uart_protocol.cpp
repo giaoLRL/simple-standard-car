@@ -5,6 +5,10 @@
 #include "modules/common/iinterfaces.hpp"
 #include "modules/control/turn_state_machine.hpp"
 #include "modules/pid/pid.hpp"
+#if ENABLE_ENCODER
+#include "modules/encoder/encoder.hpp"
+#include "modules/speed_pid/speed_pid.hpp"
+#endif
 #include "ti_msp_dl_config.h"
 
 #include <cstdio>
@@ -15,10 +19,18 @@ extern PID g_pid;
 extern volatile int32_t  g_dbg_error;
 extern volatile int16_t  g_dbg_left_cmd;
 extern volatile int16_t  g_dbg_right_cmd;
+extern volatile int32_t  g_dbg_correction;
 extern volatile bool     g_dbg_line_found;
 extern volatile uint8_t  g_dbg_digital;
 extern volatile uint16_t g_dbg_normal[8];
 extern volatile uint16_t g_dbg_analog[8];
+
+#if ENABLE_ENCODER
+extern PID g_spid_left;
+extern PID g_spid_right;
+extern volatile float   g_dbg_left_rpm;
+extern volatile float   g_dbg_right_rpm;
+#endif
 
 static const char *const STATE_NAMES[] = {"直道", "转向延时", "左转", "右转", "丢线"};
 static const uint8_t STATE_COUNT = 5;
@@ -58,7 +70,7 @@ void proto_send_hello(void)
         "\"fw\":\"2.0\","
         "\"sensors\":%u,"
         "\"motors\":2,"
-        "\"encoders\":0,"
+        "\"encoders\":%u,"
         "\"gyro\":false,"
         "\"caps\":%u,"
         "\"bin\":true,"
@@ -68,18 +80,32 @@ void proto_send_hello(void)
         "\"error\",\"leftPwm\",\"rightPwm\",\"digital\","
         "\"n0\",\"n1\",\"n2\",\"n3\",\"n4\",\"n5\",\"n6\",\"n7\","
         "\"a0\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\",\"a6\",\"a7\""
+#if ENABLE_ENCODER
+        ",\"leftRpm\",\"rightRpm\""
+#endif
         "],"
         "\"params\":{"
         "\"kp\":%d,\"ki\":%d,\"kd\":%d,"
         "\"baseSpeed\":%u,\"turnOuter\":%u,\"turnInner\":%u,"
         "\"pwmMax\":%d,\"adcMax\":%u"
+#if ENABLE_ENCODER
+        ",\"speedKp\":%d,\"speedKi\":%d,\"speedKd\":%d"
+#endif
         "}"
         "}\n",
         (unsigned)SENSOR_COUNT,
+#if ENABLE_ENCODER
+        (unsigned)2,
+#else
+        (unsigned)0,
+#endif
         (unsigned)HELLO_CAPS,
         (int)(g_pid.kp * 1000), (int)(g_pid.ki * 1000), (int)(g_pid.kd * 1000),
         g_base_speed, g_turn_outer_speed, g_turn_inner_speed,
         (int)PWM_MAX, (unsigned)ADC_MAX_VALUE
+#if ENABLE_ENCODER
+        , (int)(g_speed_kp * 1000), (int)(g_speed_ki * 1000), (int)(g_speed_kd * 1000)
+#endif
     );
     hello_sent = true;
 }
@@ -87,8 +113,8 @@ void proto_send_hello(void)
 /* ============================================================
  *  proto_send_telemetry — 二进制紧凑帧发送
  *
- *  帧格式: [0xAA][0x55][type=0x01][len=47][TlmPayload:47B][checksum]
- *  总长: 52 字节 (vs 旧 JSON ~150 字节)
+ *  帧格式: [0xAA][0x55][type=0x01][len=sizeof(TlmPayload)][payload][checksum]
+ *  总长: 4 + len + 1 字节
  *  ISR 后台发送不阻塞主循环 (缓冲区满时可能短暂自旋等待)
  * ============================================================ */
 void proto_send_telemetry(void)
@@ -100,8 +126,12 @@ void proto_send_telemetry(void)
     if (state_idx >= STATE_COUNT) state_idx = STATE_COUNT - 1;
 
     uint8_t flags = 0;
-    if (!g_line_track_on) flags |= 2;
-    if (!g_motor_on)      flags |= 4;
+    if (!g_line_track_on)  flags |= 2;
+    if (!g_motor_on)       flags |= 4;
+#if ENABLE_ENCODER
+    if (!g_speed_loop_on)  flags |= 8;
+    if (!g_dir_pid_on)     flags |= 16;
+#endif
 
     TlmPayload payload;
     payload.seq       = tlm_seq++;
@@ -116,6 +146,10 @@ void proto_send_telemetry(void)
         payload.normal[i] = g_dbg_normal[i];
         payload.analog[i] = g_dbg_analog[i];
     }
+#if ENABLE_ENCODER
+    payload.left_rpm  = (int16_t)g_dbg_left_rpm;
+    payload.right_rpm = (int16_t)g_dbg_right_rpm;
+#endif
 
     /* 组装帧: header(2) + type(1) + len(1) + payload + checksum(1) */
     uint8_t frame[64];
@@ -171,10 +205,24 @@ static void parse_and_apply(const char *cmd, int len)
         if (cmd_is(cmd, len, "STOP")) {
             g_motor_on = false;
             g_pid.reset();
+#if ENABLE_ENCODER
+            g_spid_left.reset();
+            g_spid_right.reset();
+            g_enc_left.reset();
+            g_enc_right.reset();
+            g_spd_need_warmstart = true;
+#endif
         } else if (cmd_is(cmd, len, "GO")) {
             g_motor_on = true;
             g_line_track_on = true;
             g_pid.reset();
+#if ENABLE_ENCODER
+            g_spid_left.reset();
+            g_spid_right.reset();
+            g_enc_left.reset();
+            g_enc_right.reset();
+            g_spd_need_warmstart = true;
+#endif
         } else if (cmd_is(cmd, len, "STP")) {
             g_motor_on = !g_motor_on;
         } else if (cmd_is(cmd, len, "RUN")) {
@@ -182,7 +230,25 @@ static void parse_and_apply(const char *cmd, int len)
         } else if (cmd_is(cmd, len, "CAL")) {
         } else if (cmd_is(cmd, len, "HELLO")) {
             proto_send_hello();
-        } else if (cmd_is(cmd, len, "RST")) {
+        }
+#if ENABLE_ENCODER
+        else if (cmd_is(cmd, len, "SPD?")) {
+            char rsp[80];
+            int n = snprintf(rsp, sizeof(rsp),
+                "L rpm=%d ticks=%ld per=%luus R rpm=%d ticks=%ld per=%luus\n",
+                (int)g_enc_left.get_speed_rpm(), (long)g_enc_left.get_ticks(),
+                (unsigned long)g_enc_left.pulse_period_us,
+                (int)g_enc_right.get_speed_rpm(), (long)g_enc_right.get_ticks(),
+                (unsigned long)g_enc_right.pulse_period_us);
+            if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
+        } else if (cmd_is(cmd, len, "ENC?")) {
+            char rsp[48];
+            int n = snprintf(rsp, sizeof(rsp), "L%d R%d\n",
+                (int)g_enc_left.get_ticks(), (int)g_enc_right.get_ticks());
+            if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
+        }
+#endif
+        else if (cmd_is(cmd, len, "RST")) {
             g_pid.kp = 0.05f;
             g_pid.ki = 0.0000f;
             g_pid.kd = 0.13f;
@@ -190,6 +256,28 @@ static void parse_and_apply(const char *cmd, int len)
             g_turn_outer_speed = 170;
             g_turn_inner_speed = 80;
             g_pid.reset();
+#if ENABLE_ENCODER
+            g_speed_kp = SPEED_KP_DEFAULT;
+            g_speed_ki = SPEED_KI_DEFAULT;
+            g_speed_kd = SPEED_KD_DEFAULT;
+            g_speed_loop_on = true;
+            g_dir_pid_on    = true;
+            g_spid_left.kp  = g_speed_kp;
+            g_spid_left.ki  = g_speed_ki;
+            g_spid_left.kd  = g_speed_kd;
+            g_spid_right.kp = g_speed_kp;
+            g_spid_right.ki = g_speed_ki;
+            g_spid_right.kd = g_speed_kd;
+            g_spid_left.reset();
+            g_spid_right.reset();
+            g_spid_left.set_sum_error(0.0f);
+            g_spid_right.set_sum_error(0.0f);
+            g_enc_left_rev  = ENC_LEFT_REVERSED;
+            g_enc_right_rev = ENC_RIGHT_REVERSED;
+            g_enc_left.reversed_  = g_enc_left_rev;
+            g_enc_right.reversed_ = g_enc_right_rev;
+            g_spd_need_warmstart = true;
+#endif
         }
         return;
     }
@@ -219,6 +307,45 @@ static void parse_and_apply(const char *cmd, int len)
     } else if (cmd_is(cmd, key_len, "MTO")) {
         g_motor_on = (val_int != 0);
     }
+#if ENABLE_ENCODER
+    else if (cmd_is(cmd, key_len, "SKP")) {
+        g_speed_kp = (float)val_int / 1000.0f;
+        g_spid_left.kp = g_speed_kp;
+        g_spid_right.kp = g_speed_kp;
+    } else if (cmd_is(cmd, key_len, "SKI")) {
+        g_speed_ki = (float)val_int / 1000.0f;
+        g_spid_left.ki = g_speed_ki;
+        g_spid_right.ki = g_speed_ki;
+        /* 改 Ki 后清零积分：防突变 */
+        g_spid_left.set_sum_error(0.0f);
+        g_spid_right.set_sum_error(0.0f);
+    } else if (cmd_is(cmd, key_len, "SKD")) {
+        g_speed_kd = (float)val_int / 1000.0f;
+        g_spid_left.kd = g_speed_kd;
+        g_spid_right.kd = g_speed_kd;
+    } else if (cmd_is(cmd, key_len, "SEN")) {
+        g_speed_loop_on = (val_int != 0);
+    } else if (cmd_is(cmd, key_len, "DEN")) {
+        g_dir_pid_on = (val_int != 0);
+    } else if (cmd_is(cmd, key_len, "ENCDIR")) {
+        /* ENCDIR=L0R1 → 左正常/右反转；同理 L1R0, L0R0, L1R1 */
+        const char *p = val_str;
+        while (*p) {
+            bool left = false;
+            if (*p == 'L' || *p == 'l') { left = true; p++; }
+            else if (*p == 'R' || *p == 'r') { left = false; p++; }
+            else { p++; continue; }
+            int rev = (*p == '1') ? 1 : 0;
+            (left ? g_enc_left_rev : g_enc_right_rev) = (rev != 0);
+            (left ? g_enc_left.reversed_ : g_enc_right.reversed_) = (rev != 0);
+            p++;
+        }
+        char rsp[40];
+        int n = snprintf(rsp, sizeof(rsp), "ENCDIR L%d R%d\n",
+            (int)g_enc_left_rev, (int)g_enc_right_rev);
+        if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
+    }
+#endif
 }
 
 void proto_poll_commands(void)
