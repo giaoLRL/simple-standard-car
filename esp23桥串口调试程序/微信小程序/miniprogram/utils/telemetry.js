@@ -307,16 +307,6 @@ class TelemetryService {
         this.connectionMode = 'wait_hello';
         this.isBinary = false;
         this.helloTimer = setTimeout(() => this.onHelloTimeout(), HELLO_TIMEOUT);
-        /* 定时重发 HELLO：标定期间 MCU 在阻塞中收不到，标定完后在
-         * proto_poll_commands 里处理。每 2 秒重发一次，确保不会遗漏。 */
-        this.helloRetryTimer = setInterval(() => {
-          if (this.connectionMode === 'wait_hello') {
-            this.sendCmd('HELLO');
-          } else {
-            clearInterval(this.helloRetryTimer);
-            this.helloRetryTimer = null;
-          }
-        }, HELLO_RETRY_MS);
         this.sendCmd('HELLO');
         /* 在通知启用后注册回调（BLE 栈此时一定就绪）*/
         wx.onBLECharacteristicValueChange((res) => {

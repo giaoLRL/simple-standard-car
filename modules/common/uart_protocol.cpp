@@ -1,4 +1,4 @@
-#include "modules/common/uart_protocol.hpp"
+﻿#include "modules/common/uart_protocol.hpp"
 #include "modules/common/uart_debug.hpp"
 #include "modules/common/config.hpp"
 #include "modules/common/timebase.hpp"
@@ -61,9 +61,27 @@ void proto_init(void)
     /* proto_send_hello(); — 移除启动时阻塞发送 */
 }
 
+/* ============================================================
+ *  proto_send_hello — 非阻塞 HELLO 响应
+ *
+ *  修复 (2026-07-20): 原实现调用 uart_debug_printf 阻塞发送约 300 字节,
+ *  在主循环内被 proto_poll_commands→parse_and_apply 触发时阻塞主循环
+ *  ~312ms @9600baud。此期间无传感器读取、无电机控制、无喂狗, 车会
+ *  短暂失控。更严重的是, 调用链深度 (main→poll→parse→send_hello→
+ *  printf→send→send_char) 加 ISR 嵌套栈用超过默认栈 512 字节, 导致
+ *  HardFault (默认 handler 静默死循环→蜂鸣器停响)。
+ *
+ *  现在: 用静态缓冲 + vsnprintf 格式化 (不占栈), 再用非阻塞
+ *  uart_debug_send_bytes_nb 一次性写入 TX 环。若 TX 环空间不足则
+ *  静默丢弃, 小程序 15 秒超时后降级重试。hello_sent 仅在发送成功
+ *  时置位, 确保遥测不会在 HELLO 协商完成前启动。
+ * ============================================================ */
 void proto_send_hello(void)
 {
-    uart_debug_printf(
+    static char buf[640];
+    int len;
+
+    len = snprintf(buf, sizeof(buf),
         "$HELLO,0,{"
         "\"dev\":\"LineFollower\","
         "\"mcu\":\"MSPM0G3507\","
@@ -107,7 +125,15 @@ void proto_send_hello(void)
         , (int)(g_speed_kp * 1000), (int)(g_speed_ki * 1000), (int)(g_speed_kd * 1000)
 #endif
     );
-    hello_sent = true;
+
+    if (len > 0 && len < (int)sizeof(buf)) {
+        if (uart_debug_send_bytes_nb((const uint8_t *)buf, len)) {
+            hello_sent = true;
+        }
+        /* 发送失败 (TX 环空间不足): hello_sent 保持 false,
+         * 遥测不启动。小程序 HELLO 超时 15 秒后降级重试,
+         * 或小程序重新发送 HELLO 命令时会再次触发本函数。 */
+    }
 }
 
 /* ============================================================
@@ -120,6 +146,12 @@ void proto_send_hello(void)
 void proto_send_telemetry(void)
 {
     if (!hello_sent) return;
+
+    /* 防止 TX 缓冲区溢出：二进制遥测帧 56 字节，9600 baud
+     * 每 10ms 只能发 ~9.6 字节。若按主循环 10ms 周期每次发 56 字节，
+     * TX 环形缓冲区 (256B) 在 ~57ms 内塞满，之后永久阻塞主循环。
+     * 此处保守检查：剩余空间 < 64 字节时跳过本帧。 */
+    if (uart_debug_tx_space() < 64) return;
 
     TurnState state = turn_fsm_get_state();
     uint8_t state_idx = (uint8_t)state;
@@ -168,10 +200,11 @@ void proto_send_telemetry(void)
     }
     *p++ = checksum;
 
-    /* 非阻塞发送：写入 TX 环形缓冲区，ISR 后台发出 */
-    uart_debug_send_bytes(frame, (int)(p - frame));
-
-    tlm_seq &= 0xFFFF;
+    /* 非阻塞发送：写入 TX 环形缓冲区，ISR 后台发出。
+     * 空间不足直接丢弃本帧，绝不阻塞。帧率由上游 500ms 节流控制。 */
+    if (!uart_debug_send_bytes_nb(frame, (int)(p - frame))) {
+        /* TX 缓冲不足，静默丢弃本帧。接收端可通过 tlm_seq 跳号检测丢帧。 */
+    }
 }
 /* ============================================================
  *  命令解析（文本协议，保持不变）
@@ -335,6 +368,8 @@ static void parse_and_apply(const char *cmd, int len)
             if (*p == 'L' || *p == 'l') { left = true; p++; }
             else if (*p == 'R' || *p == 'r') { left = false; p++; }
             else { p++; continue; }
+            /* 修复: p++ 后检查是否已到字符串末尾, 防止越界读取 */
+            if (*p == '\0') break;
             int rev = (*p == '1') ? 1 : 0;
             (left ? g_enc_left_rev : g_enc_right_rev) = (rev != 0);
             (left ? g_enc_left.reversed_ : g_enc_right.reversed_) = (rev != 0);

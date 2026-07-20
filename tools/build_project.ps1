@@ -26,6 +26,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "SysConfig generation failed with exit code $LASTEXITCODE"
 }
 
+# 栈大小从默认 512 增大到 1024（uart_debug_printf 的 static buf 已不占栈，
+# 但 call chain 仍有 depth，加大栈是安全底线）
+$linkerCmd = Join-Path $syscfgDir "device_linker.cmd"
+(Get-Content $linkerCmd -Raw) -replace '--stack_size=512', '--stack_size=1024' | Set-Content $linkerCmd -NoNewline
+
 $includeArgs = @(
     "-I$projectDir",
     "-I$syscfgDir",

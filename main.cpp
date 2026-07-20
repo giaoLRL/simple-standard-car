@@ -1,4 +1,4 @@
-/*
+﻿/*
  * main.cpp — 循迹小车入口点 + 依赖组装 + 主循环
  *
  * 功能: 8 路红外传感器循迹，位置式 PID 驱动双电机差速转向。
@@ -204,6 +204,32 @@ static void speed_loop_trim(int16_t *left_cmd, int16_t *right_cmd)
 static constexpr int32_t SENSOR_ERROR_DEADBAND = 5;  /* |error|<=5 置零, 减少直线微振; 修复合入不等式 */
 
 /* ============================================================
+ *  HardFault 异常处理 — 快速蜂鸣 3 长 3 短 后死循环
+ *  若发送参数后听到此报警 = 硬件异常崩溃
+ * ============================================================ */
+extern "C" void HardFault_Handler(void)
+{
+    while (1) {
+        /* 3 声长响 (200ms on, 200ms off) */
+        for (int i = 0; i < 3; i++) {
+            DL_GPIO_setPins(GPIO_BUZZER_PORT, GPIO_BUZZER_BUZZER_PIN);
+            for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 1000U * 200U); d++) { __NOP(); }
+            DL_GPIO_clearPins(GPIO_BUZZER_PORT, GPIO_BUZZER_BUZZER_PIN);
+            for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 1000U * 200U); d++) { __NOP(); }
+        }
+        /* 3 声短响 (80ms on, 120ms off) */
+        for (int i = 0; i < 3; i++) {
+            DL_GPIO_setPins(GPIO_BUZZER_PORT, GPIO_BUZZER_BUZZER_PIN);
+            for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 1000U * 80U); d++) { __NOP(); }
+            DL_GPIO_clearPins(GPIO_BUZZER_PORT, GPIO_BUZZER_BUZZER_PIN);
+            for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 1000U * 120U); d++) { __NOP(); }
+        }
+        /* 停顿 1.5 秒后重复 */
+        for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 1000U * 1500U); d++) { __NOP(); }
+    }
+}
+
+/* ============================================================
  *  main — 入口点 + 主循环
  * ============================================================ */
 
@@ -305,6 +331,7 @@ int main(void)
      * 因 calibrate() 阻塞未能处理，此处补发确保小程序识别 MCU 已就绪。 */
     proto_send_hello();
 
+
     /* ===== 4. 主循环 ===== */
     uint32_t next_control_ms = timebase_millis();
     while (1) {
@@ -351,6 +378,7 @@ int main(void)
                 proto_send_telemetry();
             }
         }
+        uart_debug_continue_tx();
         proto_poll_commands();
 
         /* ---- 直角弯状态机 ---- */
