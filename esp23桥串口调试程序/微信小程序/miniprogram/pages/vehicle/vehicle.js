@@ -1,4 +1,4 @@
-const telemetry = require('../../utils/telemetry');
+﻿const telemetry = require('../../utils/telemetry');
 
 function pwmLevel(pwm) {
   var magnitude = Math.min(1000, Math.abs(pwm));
@@ -41,8 +41,8 @@ function buildV3Wheels(debug, uiConfig) {
     wheels.push({ label: '前右 FR', pwm: debug.pwmFR || 0, enc: debug.encFR || 0, level: pwmLevel(debug.pwmFR || 0), power: Math.round(Math.min(1000, Math.abs(debug.pwmFR || 0)) / 10) });
     wheels.push({ label: '后右 BR', pwm: debug.pwmBR || 0, enc: debug.encBR || 0, level: pwmLevel(debug.pwmBR || 0), power: Math.round(Math.min(1000, Math.abs(debug.pwmBR || 0)) / 10) });
   } else {
-    wheels.push({ label: '左轮', pwm: lPwm, enc: 0, level: pwmLevel(lPwm), power: Math.round(Math.min(1000, Math.abs(lPwm)) / 10) });
-    wheels.push({ label: '右轮', pwm: rPwm, enc: 0, level: pwmLevel(rPwm), power: Math.round(Math.min(1000, Math.abs(rPwm)) / 10) });
+    wheels.push({ label: '左轮', pwm: lPwm, enc: debug.leftRpm || 0, level: pwmLevel(lPwm), power: Math.round(Math.min(1000, Math.abs(lPwm)) / 10) });
+    wheels.push({ label: '右轮', pwm: rPwm, enc: debug.rightRpm || 0, level: pwmLevel(rPwm), power: Math.round(Math.min(1000, Math.abs(rPwm)) / 10) });
   }
 
   var sensors = [];

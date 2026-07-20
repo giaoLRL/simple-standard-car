@@ -152,6 +152,13 @@ static void speed_loop_trim(int16_t *left_cmd, int16_t *right_cmd)
 {
     if (!g_speed_loop_on) return;
 
+    /* 转弯/丢线后首次进入直线 → 重置速度 PID，防旧状态跳变 */
+    if (g_spd_need_warmstart) {
+        g_spid_left.reset();
+        g_spid_right.reset();
+        g_spd_need_warmstart = false;
+    }
+
     int16_t base_l = *left_cmd;
     int16_t base_r = *right_cmd;
     int16_t sign_l = (base_l >= 0) ? 1 : -1;
@@ -173,8 +180,6 @@ static void speed_loop_trim(int16_t *left_cmd, int16_t *right_cmd)
     g_dbg_spd_err_l = err_l;
     g_dbg_spd_err_r = err_r;
 
-    g_spid_left.reset_output();
-    g_spid_right.reset_output();
     int16_t trim_l = round_to_i32(g_spid_left.calc(err_l));
     int16_t trim_r = round_to_i32(g_spid_right.calc(err_r));
 

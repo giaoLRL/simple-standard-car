@@ -1,4 +1,4 @@
-/*
+﻿/*
  * line_sensor.cpp — 8 路循迹传感器模块实现
  *
  * 硬件: CD4051 模拟开关 + ADC0_CH3
@@ -23,6 +23,8 @@
 
 #include "modules/line_sensor/line_sensor.hpp"
 #include "modules/common/buzzer.hpp"
+#include "modules/common/uart_debug.hpp"
+#include "modules/common/uart_protocol.hpp"
 
 /* 全局单例 */
 LineSensor g_line_sensor;
@@ -149,7 +151,8 @@ static void wait_key_press_()
      *       一旦进入 WFE 且无线程事件，CPU 会永久睡眠。
      */
     while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) != 0) {
-        __NOP();
+        uart_debug_continue_tx();
+        proto_poll_commands();
     }
 
     /* 消抖：等待约 20 ms */
@@ -157,7 +160,8 @@ static void wait_key_press_()
 
     /* 等待释放 */
     while ((DL_GPIO_readPins(KEY_USER_PORT, KEY_USER_PIN) & KEY_USER_PIN) == 0) {
-        __NOP();
+        uart_debug_continue_tx();
+        proto_poll_commands();
     }
 
     delay_cycles(20U * (CPUCLK_FREQ / 1000U));

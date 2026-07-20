@@ -72,9 +72,9 @@ void proto_init(void)
  *  HardFault (默认 handler 静默死循环→蜂鸣器停响)。
  *
  *  现在: 用静态缓冲 + vsnprintf 格式化 (不占栈), 再用非阻塞
- *  uart_debug_send_bytes_nb 一次性写入 TX 环。若 TX 环空间不足则
- *  静默丢弃, 小程序 15 秒超时后降级重试。hello_sent 仅在发送成功
- *  时置位, 确保遥测不会在 HELLO 协商完成前启动。
+ *  uart_debug_send_bytes 发送（内部先排空旧 TX 再写新数据）。
+ *  hello_sent 无条件置位：数据已在静态缓冲中，
+ *  continue_tx 会在后续主循环中排空。
  * ============================================================ */
 void proto_send_hello(void)
 {
@@ -127,12 +127,8 @@ void proto_send_hello(void)
     );
 
     if (len > 0 && len < (int)sizeof(buf)) {
-        if (uart_debug_send_bytes_nb((const uint8_t *)buf, len)) {
-            hello_sent = true;
-        }
-        /* 发送失败 (TX 环空间不足): hello_sent 保持 false,
-         * 遥测不启动。小程序 HELLO 超时 15 秒后降级重试,
-         * 或小程序重新发送 HELLO 命令时会再次触发本函数。 */
+        uart_debug_send_bytes((const uint8_t *)buf, len);
+        hello_sent = true;
     }
 }
 
@@ -149,9 +145,9 @@ void proto_send_telemetry(void)
 
     /* 防止 TX 缓冲区溢出：二进制遥测帧 56 字节，9600 baud
      * 每 10ms 只能发 ~9.6 字节。若按主循环 10ms 周期每次发 56 字节，
-     * TX 环形缓冲区 (256B) 在 ~57ms 内塞满，之后永久阻塞主循环。
-     * 此处保守检查：剩余空间 < 64 字节时跳过本帧。 */
-    if (uart_debug_tx_space() < 64) return;
+     * 改直写硬件 FIFO 后无环形缓冲区，仅在
+     * 此处保守检查：TX 正忙 (g_tx_data != nullptr) 时跳过本帧。 */
+    if (uart_debug_tx_space() == 0) return;
 
     TurnState state = turn_fsm_get_state();
     uint8_t state_idx = (uint8_t)state;
