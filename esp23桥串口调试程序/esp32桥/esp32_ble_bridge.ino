@@ -39,7 +39,7 @@
 /* 增大缓冲区以容纳完整二进制帧 (54 字节 + 余量) */
 #define TX_PACKET_SIZE  128
 /* 对齐 MicroPython 版: 200ms 冲刷 / 500ms 半包丢弃 */
-#define FLUSH_TIMEOUT_MS     200
+#define FLUSH_TIMEOUT_MS      20
 #define HALF_PACKET_DISCARD_MS 500
 
 BLECharacteristic *pTxChar;

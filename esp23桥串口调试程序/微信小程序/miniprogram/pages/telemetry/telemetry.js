@@ -6,7 +6,7 @@ var LEGACY_CHARTS = {
   pos: { label: '循迹位置', min: -450, max: 450, series: [['pos', '#007f82']] },
   pwm: { label: '四轮 PWM', min: -1000, max: 1000, series: [['pwmFL', '#007f82'], ['pwmFR', '#d64545'], ['pwmBL', '#168aad'], ['pwmBR', '#e09f3e']] },
   enc: { label: '四轮编码器', min: -50, max: 50, series: [['encFL', '#007f82'], ['encFR', '#d64545'], ['encBL', '#168aad'], ['encBR', '#e09f3e']] },
-  speed: { label: '车速 mm/s', min: -2000, max: 2000, series: [['speedL', '#168aad'], ['speedR', '#e09f3e'], ['speedAvg', '#303740']] },
+  // speed chart removed - MCU sends leftRpm/rightRpm, see rpm chart
   gyro: { label: '陀螺仪', min: -180, max: 180, series: [['gyroZ', '#7656a8'], ['angleZ', '#d64545']] },
   dyc: { label: 'DYC', min: -800, max: 800, series: [['dycYaw', '#007f82'], ['dycMoment', '#e09f3e']] }
 };
@@ -21,11 +21,7 @@ function buildCharts(uiConfig) {
     charts.pos = { label: '位置偏差', min: -450, max: 450, series: [['pos', COLORS[0]]] };
   }
 
-  var pwmL = tlm.indexOf('leftPwm') >= 0 ? 'leftPwm' : (tlm.indexOf('lPwm') >= 0 ? 'lPwm' : null);
-  var pwmR = tlm.indexOf('rightPwm') >= 0 ? 'rightPwm' : (tlm.indexOf('rPwm') >= 0 ? 'rPwm' : null);
-  if (pwmL && pwmR) {
-    charts.pwm = { label: '电机 PWM', min: -1000, max: 1000, series: [[pwmL, COLORS[0]], [pwmR, COLORS[1]]] };
-  }
+  /* PWM chart removed — replaced by speed target-vs-actual charts below */
 
   var normFields = [];
   for (var i = 0; i < sensorCount; i++) {
@@ -53,21 +49,19 @@ function buildCharts(uiConfig) {
   }
 
   if (uiConfig.hasEncoder) {
-    var rpmSeries = [];
-    if (tlm.indexOf('leftRpm') >= 0) rpmSeries.push(['leftRpm', COLORS[0]]);
-    if (tlm.indexOf('rightRpm') >= 0) rpmSeries.push(['rightRpm', COLORS[1]]);
-    if (!rpmSeries.length && tlm.indexOf('speedL') >= 0) {
-      if (tlm.indexOf('speedL') >= 0) rpmSeries.push(['speedL', COLORS[0]]);
-      if (tlm.indexOf('speedR') >= 0) rpmSeries.push(['speedR', COLORS[1]]);
+    var hasLeftErr = tlm.indexOf('leftRpm') >= 0 && tlm.indexOf('leftTgtRpm') >= 0;
+    var hasRightErr = tlm.indexOf('rightRpm') >= 0 && tlm.indexOf('rightTgtRpm') >= 0;
+    if (hasLeftErr) {
+      charts.spdErrL = { label: '左轮偏差(RPM)', min: -200, max: 200, series: [['spdErrL', '#d64545']] };
     }
-    if (rpmSeries.length) {
-      charts.rpm = { label: '编码器 RPM', min: -500, max: 500, series: rpmSeries };
+    if (hasRightErr) {
+      charts.spdErrR = { label: '右轮偏差(RPM)', min: -200, max: 200, series: [['spdErrR', '#007f82']] };
     }
   }
 
   if (tlm.indexOf('error') >= 0 || tlm.indexOf('err') >= 0) {
     var errField = tlm.indexOf('error') >= 0 ? 'error' : 'err';
-    charts.err = { label: '循迹偏差', min: -500, max: 500, series: [[errField, COLORS[0]]] };
+    charts.err = { label: '循迹偏差', min: -4000, max: 4000, series: [[errField, COLORS[0]]] };
   }
 
   return charts;
@@ -104,8 +98,16 @@ function buildMetrics(debug, uiConfig) {
     if (debug.leftPwm !== undefined) items.push({ label: '左 PWM', value: debug.leftPwm });
     if (debug.rightPwm !== undefined) items.push({ label: '右 PWM', value: debug.rightPwm });
     if (uiConfig.hasEncoder) {
-      if (debug.leftRpm !== undefined) items.push({ label: '左轮 RPM', value: debug.leftRpm });
-      if (debug.rightRpm !== undefined) items.push({ label: '右轮 RPM', value: debug.rightRpm });
+      if (debug.leftRpm !== undefined) {
+        var lv = debug.leftRpm;
+        if (debug.leftTgtRpm !== undefined) lv += ' / ' + debug.leftTgtRpm;
+        items.push({ label: '左轮(R/T)', value: lv });
+      }
+      if (debug.rightRpm !== undefined) {
+        var rv = debug.rightRpm;
+        if (debug.rightTgtRpm !== undefined) rv += ' / ' + debug.rightTgtRpm;
+        items.push({ label: '右轮(R/T)', value: rv });
+      }
     }
     items.push({ label: '速度环', value: debug.speedLoop ? '开' : '关' });
     items.push({ label: '方向环', value: debug.dirLoop ? '开' : '关' });
@@ -143,7 +145,8 @@ Page({
     packetRate: '0.0', validPackets: 0, invalidPackets: 0, droppedPackets: 0,
     chartKey: 'pos', chartLabel: '', legend: [], charts: {}, chartKeys: [],
     metrics: [], sensors: [],
-    helloReceived: false
+    helloReceived: false,
+    customMin: '', customMax: '', zoomLevel: 1
   },
 
   onLoad() {
@@ -153,7 +156,7 @@ Page({
     if (this.unsubscribe) return;
     this.history = telemetry.state.history.slice();
     var self = this;
-    this.unsubscribe = telemetry.subscribe(function (state) {
+    this.unsubscribe = telemetry.subscribe(function (state, reason) {
       var d = state.debug;
       var uiConfig = telemetry.getUiConfig();
       var isV3 = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
@@ -162,7 +165,14 @@ Page({
       if (!self.data.chartKey || !charts[self.data.chartKey]) {
         self.setData({ chartKey: chartKeys[0] || 'pos' });
       }
-      if (state.reason === 'telemetry') self.history = state.history.slice(-HISTORY);
+      if (reason === 'telemetry') {
+      self.history = state.history.map(function(row) {
+        var r = Object.assign({}, row);
+        r.spdErrL = (row.leftTgtRpm !== undefined && row.leftRpm !== undefined) ? (row.leftRpm - row.leftTgtRpm) : 0;
+        r.spdErrR = (row.rightTgtRpm !== undefined && row.rightRpm !== undefined) ? (row.rightRpm - row.rightTgtRpm) : 0;
+        return r;
+      }).slice(-HISTORY);
+    }
       self.setData({
         connected: state.connected, connecting: state.connecting, deviceName: state.deviceName,
         debug: d, packetRate: state.packetRate.toFixed(1), validPackets: state.validPackets,
@@ -179,7 +189,7 @@ Page({
           });
         }
       });
-      if (state.reason === 'telemetry') self.drawChart();
+      if (reason === 'telemetry') self.drawChart();
     });
   },
 
@@ -213,11 +223,37 @@ Page({
     }.bind(this));
   },
 
+  zoomIn() {
+    var lv = (this.data.zoomLevel || 1) * 2;
+    if (lv > 32) lv = 32;
+    this.setData({ zoomLevel: lv });
+  },
+  zoomOut() {
+    var lv = (this.data.zoomLevel || 1) / 2;
+    if (lv < 0.125) lv = 0.125;
+    this.setData({ zoomLevel: lv });
+  },
+  zoomReset() {
+    this.setData({ zoomLevel: 1, customMin: '', customMax: '' });
+  },
+  onMinInput(e) { this.setData({ customMin: e.detail.value }); },
+  onMaxInput(e) { this.setData({ customMax: e.detail.value }); },
+
   drawChart() {
     if (!this.ctx) return;
     var ctx = this.ctx, width = this.width, height = this.height;
     var chart = this.data.charts[this.data.chartKey];
     if (!chart) return;
+    /* 手动缩放：用 customMin/customMax 覆盖默认量程 */
+    var cmin = parseFloat(this.data.customMin);
+    var cmax = parseFloat(this.data.customMax);
+    if (Number.isFinite(cmin) && Number.isFinite(cmax) && cmax > cmin) {
+      chart = Object.assign({}, chart, { min: cmin, max: cmax });
+    } else if (this.data.zoomLevel && this.data.zoomLevel !== 1) {
+      var mid = (chart.max + chart.min) / 2;
+      var half = (chart.max - chart.min) / 2 / this.data.zoomLevel;
+      chart = Object.assign({}, chart, { min: mid - half, max: mid + half });
+    }
     var data = this.history;
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = '#f8f9fa';

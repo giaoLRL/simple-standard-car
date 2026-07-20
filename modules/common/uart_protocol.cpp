@@ -30,6 +30,8 @@ extern PID g_spid_left;
 extern PID g_spid_right;
 extern volatile float   g_dbg_left_rpm;
 extern volatile float   g_dbg_right_rpm;
+extern volatile float   g_dbg_spd_target_l_rpm;
+extern volatile float   g_dbg_spd_target_r_rpm;
 #endif
 
 static const char *const STATE_NAMES[] = {"直道", "转向延时", "左转", "右转", "丢线"};
@@ -92,14 +94,14 @@ void proto_send_hello(void)
         "\"gyro\":false,"
         "\"caps\":%u,"
         "\"bin\":true,"
-        "\"states\":[\"直道\",\"转向延时\",\"左转\",\"右转\",\"丢线\"],"
+        "\"states\":[\"STRAIGHT\",\"TURN_DELAY\",\"LEFT\",\"RIGHT\",\"LOST\"],"
         "\"tlm\":["
         "\"seq\",\"tick\",\"state\",\"flags\","
         "\"error\",\"leftPwm\",\"rightPwm\",\"digital\","
         "\"n0\",\"n1\",\"n2\",\"n3\",\"n4\",\"n5\",\"n6\",\"n7\","
         "\"a0\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\",\"a6\",\"a7\""
 #if ENABLE_ENCODER
-        ",\"leftRpm\",\"rightRpm\""
+        ",\"leftRpm\",\"rightRpm\",\"leftTgtRpm\",\"rightTgtRpm\""
 #endif
         "],"
         "\"params\":{"
@@ -177,10 +179,12 @@ void proto_send_telemetry(void)
 #if ENABLE_ENCODER
     payload.left_rpm  = (int16_t)g_dbg_left_rpm;
     payload.right_rpm = (int16_t)g_dbg_right_rpm;
+    payload.left_tgt_rpm  = (int16_t)g_dbg_spd_target_l_rpm;
+    payload.right_tgt_rpm = (int16_t)g_dbg_spd_target_r_rpm;
 #endif
 
     /* 组装帧: header(2) + type(1) + len(1) + payload + checksum(1) */
-    uint8_t frame[64];
+    static uint8_t frame[64];
     uint8_t *p = frame;
     *p++ = 0xAA;
     *p++ = 0x55;

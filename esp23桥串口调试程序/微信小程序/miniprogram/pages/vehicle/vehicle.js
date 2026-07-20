@@ -1,11 +1,11 @@
 ﻿const telemetry = require('../../utils/telemetry');
 
-function pwmLevel(pwm) {
-  var magnitude = Math.min(1000, Math.abs(pwm));
-  if (pwm < -10) return 'reverse';
-  if (magnitude >= 700) return 'high';
-  if (magnitude >= 350) return 'medium';
-  if (magnitude >= 10) return 'low';
+function rpmLevel(rpm) {
+  var magnitude = Math.min(400, Math.abs(rpm));
+  if (rpm < -2) return 'reverse';
+  if (magnitude >= 280) return 'high';
+  if (magnitude >= 140) return 'medium';
+  if (magnitude >= 5) return 'low';
   return 'idle';
 }
 
@@ -41,8 +41,10 @@ function buildV3Wheels(debug, uiConfig) {
     wheels.push({ label: '前右 FR', pwm: debug.pwmFR || 0, enc: debug.encFR || 0, level: pwmLevel(debug.pwmFR || 0), power: Math.round(Math.min(1000, Math.abs(debug.pwmFR || 0)) / 10) });
     wheels.push({ label: '后右 BR', pwm: debug.pwmBR || 0, enc: debug.encBR || 0, level: pwmLevel(debug.pwmBR || 0), power: Math.round(Math.min(1000, Math.abs(debug.pwmBR || 0)) / 10) });
   } else {
-    wheels.push({ label: '左轮', pwm: lPwm, enc: debug.leftRpm || 0, level: pwmLevel(lPwm), power: Math.round(Math.min(1000, Math.abs(lPwm)) / 10) });
-    wheels.push({ label: '右轮', pwm: rPwm, enc: debug.rightRpm || 0, level: pwmLevel(rPwm), power: Math.round(Math.min(1000, Math.abs(rPwm)) / 10) });
+    var lRpm = debug.leftRpm || 0;
+    var rRpm = debug.rightRpm || 0;
+    wheels.push({ label: '左轮', pwm: lRpm, enc: debug.leftTgtRpm || 0, level: rpmLevel(lRpm), power: Math.round(Math.min(400, Math.abs(lRpm)) * 100 / 400) });
+    wheels.push({ label: '右轮', pwm: rRpm, enc: debug.rightTgtRpm || 0, level: rpmLevel(rRpm), power: Math.round(Math.min(400, Math.abs(rRpm)) * 100 / 400) });
   }
 
   var sensors = [];
@@ -73,7 +75,7 @@ Page({
 
   onShow() {
     if (this.unsubscribe) return;
-    this.unsubscribe = telemetry.subscribe(function (state) {
+    this.unsubscribe = telemetry.subscribe(function (state, reason) {
       var debug = state.debug;
       var uiConfig = telemetry.getUiConfig();
       var isV3 = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
@@ -87,9 +89,9 @@ Page({
       var angle = isV3 ? (debug.angle || debug.angleZ || 0) : (debug.angleZ || 0);
       var speedText = '--';
       if (isV3) {
-        if (debug.speedAvg !== undefined) speedText = debug.speedAvg + ' mm/s';
-        else if (debug.speed !== undefined) speedText = debug.speed + ' mm/s';
-        else if (debug.speedL !== undefined) speedText = debug.speedL + '/' + debug.speedR + ' mm/s';
+        if (debug.leftRpm !== undefined || debug.rightRpm !== undefined) {
+          speedText = (debug.leftRpm || 0) + ' / ' + (debug.rightRpm || 0) + ' RPM';
+        }
       } else {
         speedText = debug.speedValid ? (debug.speedAvg + ' mm/s') : '未标定';
       }
@@ -103,17 +105,22 @@ Page({
           { label: 'DYC 力矩', value: debug.dycMoment || 0 }
         ];
       } else {
-        if (debug.targetL !== undefined && debug.targetR !== undefined) {
-          detailItems.push({ label: '目标 L/R', value: debug.targetL + ' / ' + debug.targetR });
-        }
-        if (debug.corrL !== undefined || debug.corrR !== undefined) {
-          detailItems.push({ label: '修正 L/R', value: (debug.corrL || 0) + ' / ' + (debug.corrR || 0) });
-        }
-        if (debug.gyroTrim !== undefined) {
-          detailItems.push({ label: '陀螺修正', value: debug.gyroTrim });
-        }
         if (debug.err !== undefined) {
           detailItems.push({ label: '偏差', value: debug.err });
+        }
+        if (debug.leftPwm !== undefined && debug.rightPwm !== undefined) {
+          detailItems.push({ label: 'PWM L/R', value: debug.leftPwm + ' / ' + debug.rightPwm });
+        }
+        if (debug.leftRpm !== undefined && debug.rightRpm !== undefined) {
+          var lr = debug.leftRpm + (debug.leftTgtRpm !== undefined ? '→' + debug.leftTgtRpm : '');
+          var rr = debug.rightRpm + (debug.rightTgtRpm !== undefined ? '→' + debug.rightTgtRpm : '');
+          detailItems.push({ label: 'RPM 实→目 L/R', value: lr + ' / ' + rr });
+        }
+        if (debug.speedLoop !== undefined) {
+          detailItems.push({ label: '速度环', value: debug.speedLoop ? '开' : '关' });
+        }
+        if (debug.dirLoop !== undefined) {
+          detailItems.push({ label: '方向环', value: debug.dirLoop ? '开' : '关' });
         }
       }
 

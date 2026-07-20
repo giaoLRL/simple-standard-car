@@ -19,3 +19,8 @@
 .sensor.active { color:#fff; border-color:#d99a32; background:#292e34; }
 .availability { margin-bottom:8px; padding:7px 9px; border-left:3px solid; font-size:11px; background:#f4f5f6; }
 .availability.ready { color:#18734a; border-color:#36a66f; }.availability.blocked { color:#a63d32; border-color:#d64545; }
+
+.zoom-bar { display:flex; align-items:center; gap:6px; padding:6px 10px; background:#fff; border-bottom:1px solid #eee; }
+.zoom-btn { flex-shrink:0; font-size:12px; padding:2px 8px; margin:0; line-height:1.4; }
+.zoom-input { flex:1; min-width:40px; height:28px; font-size:12px; text-align:center; border:1px solid #ddd; border-radius:4px; padding:0 4px; }
+.zoom-sep { flex-shrink:0; font-size:12px; color:#999; }

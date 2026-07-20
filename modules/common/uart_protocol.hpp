@@ -37,6 +37,10 @@ typedef struct {
     int16_t  left_rpm;     /* 左轮实际转速 RPM（比例 1:1）*/
     int16_t  right_rpm;    /* 右轮实际转速 RPM（比例 1:1）*/
 #endif
+#if ENABLE_ENCODER
+    int16_t  left_tgt_rpm;  /* 左轮目标转速 RPM（比例 1:1）*/
+    int16_t  right_tgt_rpm; /* 右轮目标转速 RPM（比例 1:1）*/
+#endif
 } TlmPayload;
 #pragma pack(pop)
 

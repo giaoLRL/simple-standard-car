@@ -4,6 +4,21 @@ const MAX_RECORDS = 18000;
 const HELLO_TIMEOUT = 15000;
 const HELLO_RETRY_MS = 2000;
 
+
+/* ---- UTF-8 解码器 ---- */
+function decodeUTF8(bytes) {
+  var str = "";
+  var i = 0;
+  while (i < bytes.length) {
+    var b = bytes[i];
+    if (b < 128) { str += String.fromCharCode(b); i += 1; }
+    else if ((b & 224) === 192) { str += String.fromCharCode(((b & 31) << 6) | (bytes[i+1] & 63)); i += 2; }
+    else if ((b & 240) === 224) { str += String.fromCharCode(((b & 15) << 12) | ((bytes[i+1] & 63) << 6) | (bytes[i+2] & 63)); i += 3; }
+    else { i += 1; }
+  }
+  return str;
+}
+var STATE_CN = { STRAIGHT: "直道", TURN_DELAY: "转向延时", LEFT: "左转", RIGHT: "右转", LOST: "丢线" };
 function finiteNumber(value, integer) {
   const number = integer ? parseInt(value, 10) : parseFloat(value);
   return Number.isFinite(number) ? number : null;
@@ -61,7 +76,7 @@ const LEGACY_STATES = ['直道', '入弯', '弯中', '出弯', '丢线', '保留
  *  Total: 47 bytes (无编码器) 或 51 bytes (有编码器)
  * ============================================================ */
 const TLM_PAYLOAD_SIZE_MIN = 47;
-const TLM_PAYLOAD_SIZE     = 51;  /* 含编码器字段 */
+const TLM_PAYLOAD_SIZE     = 55;  /* 含编码器字段 */
 
 function parseBinaryTlmPayload(buffer, byteOffset) {
   const payloadLen = buffer.length - byteOffset;
@@ -87,8 +102,10 @@ function parseBinaryTlmPayload(buffer, byteOffset) {
   };
   /* 若载荷足够长 (51 字节)，读取编码器 RPM 字段 */
   if (dvLen >= 51) {
-    result.leftRpm  = dv.getInt16(47, true);
-    result.rightRpm = dv.getInt16(49, true);
+    result.leftRpm     = dv.getInt16(47, true);
+    result.rightRpm    = dv.getInt16(49, true);
+    result.leftTgtRpm  = dv.getInt16(51, true);
+    result.rightTgtRpm = dv.getInt16(53, true);
   }
   return result;
 }
@@ -429,9 +446,7 @@ class TelemetryService {
     console.log('[BLE] rx', bytes.length, 'bytes, first:', bytes[0]?.toString(16), bytes[1]?.toString(16));
 
     /* ---- 追加到文本缓冲区 (用于 HELLO / 命令 / 老版本遥测) ---- */
-    for (let i = 0; i < bytes.length; i++) {
-      this.buffer += String.fromCharCode(bytes[i]);
-    }
+    this.buffer += decodeUTF8(bytes);
     if (this.buffer.length > 2048) this.buffer = this.buffer.slice(-1024);
 
     /* ---- 追加到二进制缓冲区 ---- */
@@ -546,9 +561,7 @@ class TelemetryService {
       seq: raw.seq,
       tick: raw.tick,
       state: raw.state,
-      stateName: (this.hello && this.hello.states)
-        ? (this.hello.states[raw.state] || ('状态' + raw.state))
-        : ('状态' + raw.state),
+      stateName: (function(s){ return STATE_CN[s] || s || ('状态' + raw.state); })((this.hello && this.hello.states) ? this.hello.states[raw.state] : null),
       flags,
       digital,
       pos: raw.error,
@@ -569,6 +582,8 @@ class TelemetryService {
       /* 编码器 RPM（仅当载荷包含该字段时） */
       leftRpm: raw.leftRpm !== undefined ? raw.leftRpm : 0,
       rightRpm: raw.rightRpm !== undefined ? raw.rightRpm : 0,
+      leftTgtRpm: raw.leftTgtRpm !== undefined ? raw.leftTgtRpm : 0,
+      rightTgtRpm: raw.rightTgtRpm !== undefined ? raw.rightTgtRpm : 0,
       /* 缺省字段 (保持兼容) */
       raw: digital & 0x1F,
       rawHex: '0x' + ('0' + (digital & 0x1F).toString(16).toUpperCase()).slice(-2),
@@ -602,6 +617,7 @@ class TelemetryService {
       this.state.debug = this.isBinary ? defaultDebugV3() : defaultDebugV3();
       this.state.debug.protocol = this.isBinary ? 4 : 3;
       if (this.hello.states) {
+        this.hello.states = this.hello.states.map(function(s) { return STATE_CN[s] || s; });
         this.state.debug.stateName = this.hello.states[0] || '';
       }
       this.emit('hello_ready');

@@ -10,7 +10,15 @@
       <view class="chart-selector">
         <button wx:for="{{chartKeys}}" wx:key="id" wx:for-item="ck" class="{{chartKey==ck?'active':''}}" data-key="{{ck}}" bindtap="selectChart">{{charts[ck].label}}</button>
       </view>
-      <canvas type="2d" id="telemetryChart" class="telemetry-chart"></canvas>
+          <view class="zoom-bar">
+      <button class="zoom-btn" bindtap="zoomOut" size="mini">−</button>
+      <button class="zoom-btn" bindtap="zoomReset" size="mini">{{zoomLevel}}×</button>
+      <button class="zoom-btn" bindtap="zoomIn" size="mini">+</button>
+      <input class="zoom-input" placeholder="min" value="{{customMin}}" bindinput="onMinInput"/>
+      <text class="zoom-sep">~</text>
+      <input class="zoom-input" placeholder="max" value="{{customMax}}" bindinput="onMaxInput"/>
+    </view>
+    <canvas type="2d" id="telemetryChart" class="telemetry-chart"></canvas>
       <view class="chart-legend"><view wx:for="{{legend}}" wx:key="name"><view class="legend-line" style="background:{{item.color}}"></view><text>{{item.name}}</text></view></view>
     </view>
 
