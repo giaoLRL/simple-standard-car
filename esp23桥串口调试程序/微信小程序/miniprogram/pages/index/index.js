@@ -50,6 +50,13 @@ function generatePanels(uiConfig) {
     if (controls.length) panels.push({ id: 'speed_pid', name: '速度 PID', controls });
   }
 
+  if (params.turnTimeoutMs !== undefined || params.turnAdvanceMs !== undefined) {
+    const controls = [];
+    if (params.turnTimeoutMs !== undefined) controls.push({ key: 'turnTimeoutMs', name: '直角弯超时(ms)', min: 200, max: 10000, step: 100, value: params.turnTimeoutMs });
+    if (params.turnAdvanceMs !== undefined) controls.push({ key: 'turnAdvanceMs', name: '转弯前延时(ms)', min: 0, max: 1000, step: 10, value: params.turnAdvanceMs });
+    if (controls.length) panels.push({ id: 'turn_cfg', name: '直角弯配置', controls });
+  }
+
   return panels;
 }
 

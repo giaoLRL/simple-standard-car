@@ -784,6 +784,7 @@ class TelemetryService {
     this._paramCache[key] = (pidKeys.indexOf(key) >= 0) ? Math.round(value * 1000) : value;
     const cmdMap = {
       kp: 'KP', ki: 'KI', kd: 'KD',
+      turnTimeoutMs: 'TTO', turnAdvanceMs: 'TAD',
       baseSpeed: 'BSP', turnOuter: 'TOS', turnInner: 'TIS',
       lineTrackOn: 'LTO', motorOn: 'MTO',
       straight_kp: 'PK_straight_kp', straight_ki: 'PK_straight_ki', straight_kd: 'PK_straight_kd',

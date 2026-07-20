@@ -117,6 +117,8 @@ volatile float   g_dbg_spd_err_l = 0.0f;   /* 速度环左轮误差 (RPM) */
 volatile float   g_dbg_spd_err_r = 0.0f;   /* 速度环右轮误差 (RPM) */
 volatile float   g_dbg_spd_out_l = 0.0f;   /* 速度环左轮输出 (累积) */
 volatile float   g_dbg_spd_out_r = 0.0f;   /* 速度环右轮输出 (累积) */
+uint16_t g_turn_timeout_ms = 2000;              /* 直角弯超时(ms) */
+uint16_t g_turn_advance_ms = 50;                /* 直角弯前延时(ms) */
 #endif
 
 /* ============================================================

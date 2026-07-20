@@ -1,4 +1,4 @@
-﻿#include "modules/common/uart_protocol.hpp"
+#include "modules/common/uart_protocol.hpp"
 #include "modules/common/uart_debug.hpp"
 #include "modules/common/config.hpp"
 #include "modules/common/timebase.hpp"
@@ -107,7 +107,7 @@ void proto_send_hello(void)
         "\"params\":{"
         "\"kp\":%d,\"ki\":%d,\"kd\":%d,"
         "\"baseSpeed\":%u,\"turnOuter\":%u,\"turnInner\":%u,"
-        "\"pwmMax\":%d,\"adcMax\":%u"
+        "\"turnTimeoutMs\":%u,\"turnAdvanceMs\":%u,\"pwmMax\":%d,\"adcMax\":%u"
 #if ENABLE_ENCODER
         ",\"speedKp\":%d,\"speedKi\":%d,\"speedKd\":%d"
 #endif
@@ -122,7 +122,7 @@ void proto_send_hello(void)
         (unsigned)HELLO_CAPS,
         (int)(g_pid.kp * 1000), (int)(g_pid.ki * 1000), (int)(g_pid.kd * 1000),
         g_base_speed, g_turn_outer_speed, g_turn_inner_speed,
-        (int)PWM_MAX, (unsigned)ADC_MAX_VALUE
+        (unsigned)g_turn_timeout_ms, (unsigned)g_turn_advance_ms, (int)PWM_MAX, (unsigned)ADC_MAX_VALUE
 #if ENABLE_ENCODER
         , (int)(g_speed_kp * 1000), (int)(g_speed_ki * 1000), (int)(g_speed_kd * 1000)
 #endif
@@ -379,6 +379,12 @@ static void parse_and_apply(const char *cmd, int len)
         int n = snprintf(rsp, sizeof(rsp), "ENCDIR L%d R%d\n",
             (int)g_enc_left_rev, (int)g_enc_right_rev);
         if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
+    } else if (cmd_is(cmd, key_len, "TTO")) {
+        int v = parse_value(val_str);
+        if (v >= 200 && v <= 10000) g_turn_timeout_ms = (uint16_t)v;
+    } else if (cmd_is(cmd, key_len, "TAD")) {
+        int v = parse_value(val_str);
+        if (v >= 0 && v <= 1000) g_turn_advance_ms = (uint16_t)v;
     }
 #endif
 }

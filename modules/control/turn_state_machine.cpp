@@ -15,9 +15,7 @@ static constexpr uint8_t TURN_EXIT_CENTER_COUNT = 15U;  /* 15 × 10ms = 150ms */
 /* LOST→STRAIGHT 消抖: 需连续 N 周期检测到线才恢复, 防噪声误触发 */
 static constexpr uint8_t LOST_RECOVERY_DEBOUNCE = 3U;  /* 3 × 10ms = 30ms */
 
-/* 转弯前直走延时周期数 */
-static constexpr uint8_t TURN_ADVANCE_CYCLES =
-    (uint8_t)(TURN_ADVANCE_MS / CONTROL_PERIOD_MS);
+/* 转弯前直走延时周期数 (运行时计算) */
 
 static TurnState s_turn_state       = TurnState::STRAIGHT;
 static TurnState s_turn_pending     = TurnState::STRAIGHT;  /* 延时结束后执行的方向 */
@@ -65,11 +63,11 @@ void turn_fsm_update(uint8_t digital, bool line_found, uint32_t now_ms)
             } else if ((digital & LEFT_MASK) == LEFT_MASK) {
                 s_turn_state      = TurnState::TURN_DELAY;
                 s_turn_pending    = TurnState::TURN_LEFT;
-                s_turn_advance_ct = TURN_ADVANCE_CYCLES;
+                s_turn_advance_ct = (uint8_t)(g_turn_advance_ms / CONTROL_PERIOD_MS);
             } else if ((digital & RIGHT_MASK) == RIGHT_MASK) {
                 s_turn_state      = TurnState::TURN_DELAY;
                 s_turn_pending    = TurnState::TURN_RIGHT;
-                s_turn_advance_ct = TURN_ADVANCE_CYCLES;
+                s_turn_advance_ct = (uint8_t)(g_turn_advance_ms / CONTROL_PERIOD_MS);
             }
             break;
 
@@ -116,7 +114,7 @@ void turn_fsm_update(uint8_t digital, bool line_found, uint32_t now_ms)
                 s_center_lost = false;
                 s_center_stable_ct = 0;
                 s_turn_started_ms = 0;
-            } else if ((uint32_t)(now_ms - s_turn_started_ms) >= TURN_TIMEOUT_MS) {
+            } else if ((uint32_t)(now_ms - s_turn_started_ms) >= g_turn_timeout_ms) {
                 s_turn_state = TurnState::LOST;       /* 转弯超时 */
             }
             break;
