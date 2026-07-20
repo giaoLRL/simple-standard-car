@@ -1,4 +1,4 @@
-const telemetry = require('../../utils/telemetry');
+﻿const telemetry = require('../../utils/telemetry');
 
 function generatePanels(uiConfig) {
   const panels = [];
@@ -122,7 +122,10 @@ Page({
     this.setData({ stopped: !this.data.stopped });
   },
   sendCalibrate() { telemetry.sendCmd('CAL'); },
-  sendReset() { telemetry.sendCmd('RST'); },
+  sendReset() {
+    telemetry.clearParamCache();
+    telemetry.sendCmd('RST');
+  },
 
   onParamSlider(e) {
     var key = e.currentTarget.dataset.key;

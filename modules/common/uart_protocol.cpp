@@ -1,4 +1,4 @@
-#include "modules/common/uart_protocol.hpp"
+﻿#include "modules/common/uart_protocol.hpp"
 #include "modules/common/uart_debug.hpp"
 #include "modules/common/config.hpp"
 #include "modules/common/timebase.hpp"
@@ -349,9 +349,10 @@ static void parse_and_apply(const char *cmd, int len)
         g_speed_ki = (float)val_int / 1000.0f;
         g_spid_left.ki = g_speed_ki;
         g_spid_right.ki = g_speed_ki;
-        /* 改 Ki 后清零积分：防突变 */
-        g_spid_left.set_sum_error(0.0f);
-        g_spid_right.set_sum_error(0.0f);
+        /* 改 Ki 后复位增量式 PID 全部状态（output_/error_prev_/filtered_deriv_），
+         * 防旧累积输出引发突变。set_sum_error() 对 delta-type 无效。 */
+        g_spid_left.reset();
+        g_spid_right.reset();
     } else if (cmd_is(cmd, key_len, "SKD")) {
         g_speed_kd = (float)val_int / 1000.0f;
         g_spid_left.kd = g_speed_kd;
@@ -379,14 +380,17 @@ static void parse_and_apply(const char *cmd, int len)
         int n = snprintf(rsp, sizeof(rsp), "ENCDIR L%d R%d\n",
             (int)g_enc_left_rev, (int)g_enc_right_rev);
         if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
-    } else if (cmd_is(cmd, key_len, "TTO")) {
+    }
+#endif
+
+    /* 直角弯参数（与编码器无关，放在 ENABLE_ENCODER 块外） */
+    else if (cmd_is(cmd, key_len, "TTO")) {
         int v = parse_value(val_str);
         if (v >= 200 && v <= 10000) g_turn_timeout_ms = (uint16_t)v;
     } else if (cmd_is(cmd, key_len, "TAD")) {
         int v = parse_value(val_str);
         if (v >= 0 && v <= 1000) g_turn_advance_ms = (uint16_t)v;
     }
-#endif
 }
 
 void proto_poll_commands(void)

@@ -1,4 +1,4 @@
-const LOG_KEY = 'carTelemetrySessionV2';
+﻿const LOG_KEY = 'carTelemetrySessionV2';
 const CONFIG_KEY = 'carControlConfigV2';
 const MAX_RECORDS = 18000;
 const HELLO_TIMEOUT = 15000;
@@ -777,6 +777,10 @@ class TelemetryService {
       if (key === 'encoderPpr') this.sendCmd('CFG_encoder_ppr=' + value);
     }
     this.emit('config');
+  }
+
+  clearParamCache() {
+    this._paramCache = {};
   }
 
   sendParam(key, value) {
