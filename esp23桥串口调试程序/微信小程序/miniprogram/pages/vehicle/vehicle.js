@@ -74,6 +74,10 @@ Page({
   },
 
   onShow() {
+    var isV3Now = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
+    if (isV3Now) {
+      this.setData({ helloReceived: true });
+    }
     if (this.unsubscribe) return;
     this.unsubscribe = telemetry.subscribe(function (state, reason) {
       var debug = state.debug;

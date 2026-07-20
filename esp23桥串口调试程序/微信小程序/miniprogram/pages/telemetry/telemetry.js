@@ -149,10 +149,25 @@ Page({
     customMin: '', customMax: '', zoomLevel: 1
   },
 
+  saveZoom() {
+    try { wx.setStorageSync('tlm_zoom', { lv: this.data.zoomLevel, min: this.data.customMin, max: this.data.customMax }); } catch(e) {}
+  },
+  loadZoom() {
+    try {
+      var z = wx.getStorageSync('tlm_zoom');
+      if (z) this.setData({ zoomLevel: z.lv || 1, customMin: z.min || '', customMax: z.max || '' });
+    } catch(e) {}
+  },
+
   onLoad() {
     this.history = [];
   },
   onShow() {
+    this.loadZoom();
+    var isV3Now = telemetry.connectionMode === 'v3_adaptive' || telemetry.connectionMode === 'v4_binary';
+    if (isV3Now) {
+      this.setData({ helloReceived: true });
+    }
     if (this.unsubscribe) return;
     this.history = telemetry.state.history.slice();
     var self = this;
@@ -225,19 +240,19 @@ Page({
 
   zoomIn() {
     var lv = (this.data.zoomLevel || 1) * 2;
-    if (lv > 32) lv = 32;
-    this.setData({ zoomLevel: lv });
+    if (lv > 64) lv = 64;
+    this.setData({ zoomLevel: lv }); this.saveZoom();
   },
   zoomOut() {
     var lv = (this.data.zoomLevel || 1) / 2;
-    if (lv < 0.125) lv = 0.125;
-    this.setData({ zoomLevel: lv });
+    if (lv < 0.015625) lv = 0.015625;
+    this.setData({ zoomLevel: lv }); this.saveZoom();
   },
   zoomReset() {
-    this.setData({ zoomLevel: 1, customMin: '', customMax: '' });
+    this.setData({ zoomLevel: 1, customMin: '', customMax: '' }); this.saveZoom();
   },
-  onMinInput(e) { this.setData({ customMin: e.detail.value }); },
-  onMaxInput(e) { this.setData({ customMax: e.detail.value }); },
+  onMinInput(e) { this.setData({ customMin: e.detail.value }); this.saveZoom(); },
+  onMaxInput(e) { this.setData({ customMax: e.detail.value }); this.saveZoom(); },
 
   drawChart() {
     if (!this.ctx) return;

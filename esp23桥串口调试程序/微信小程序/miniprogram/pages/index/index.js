@@ -64,6 +64,19 @@ Page({
   },
 
   onShow() {
+    var curMode = telemetry.connectionMode;
+    var uiConfig = telemetry.getUiConfig();
+    var isV3Now = curMode === 'v3_adaptive' || curMode === 'v4_binary';
+    if (isV3Now && uiConfig.params && Object.keys(uiConfig.params).length) {
+      var panels = generatePanels(uiConfig);
+      var panelNames = panels.map(function (p) { return { id: p.id, name: p.name }; });
+      var activePanel = this.data.activePanel;
+      if (!activePanel && panels.length) activePanel = panels[0].id;
+      this.setData({
+        panels: panels, panelNames: panelNames, activePanel: activePanel,
+        helloReceived: true, changed: false
+      });
+    }
     if (this.unsubscribe) return;
     this.lastMode = '';
     this.unsubscribe = telemetry.subscribe(function (state) {

@@ -131,6 +131,7 @@ class TelemetryService {
     this.fieldMap = null;
     this.helloTimer = null;
     this.helloRetryTimer = null;
+    this._paramCache = {};
     this.connectionMode = 'unknown';
     this.isBinary = false;  /* true = MCU 发送二进制遥测帧 */
     this.state = {
@@ -186,6 +187,7 @@ class TelemetryService {
   getUiConfig() {
     if (this.hello) {
       const caps = this.hello.caps || 0;
+      var params = Object.assign({}, this.hello.params || {}, this._paramCache || {});
       return {
         deviceName: this.hello.dev || '未知设备',
         mcu: this.hello.mcu || '',
@@ -200,7 +202,7 @@ class TelemetryService {
         canConfig: !!(caps & 8),
         canCalibrate: !!(caps & 16),
         states: this.hello.states || ['未知'],
-        params: this.hello.params || {},
+        params: params,
         adcMax: this.hello.adcMax || 4095,
         pwmMax: this.hello.pwmMax || 1000,
         tlmFields: this.hello.tlm || []
@@ -778,6 +780,8 @@ class TelemetryService {
   }
 
   sendParam(key, value) {
+    var pidKeys = ['kp','ki','kd','speedKp','speedKi','speedKd'];
+    this._paramCache[key] = (pidKeys.indexOf(key) >= 0) ? Math.round(value * 1000) : value;
     const cmdMap = {
       kp: 'KP', ki: 'KI', kd: 'KD',
       baseSpeed: 'BSP', turnOuter: 'TOS', turnInner: 'TIS',
