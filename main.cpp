@@ -382,7 +382,6 @@ int main(void)
 
     } /* end of !g_gyro_mode_on block */
     /* ===== 4. 主循环 ===== */
-    uint32_t next_control_ms = timebase_millis();
     while (1) {
         g_dbg_loop_cnt++;  /* 心跳：每次主循环迭代 +1 */
 
@@ -442,24 +441,20 @@ int main(void)
             g_dbg_gyro_angle = g_gyro.angle;
             g_dbg_gyro_dps   = g_gyro.gyro_z_dps;
 
+            /* ????????? PID??????????????
+             *   correction > 0 ??? ?????? ??????/??????
+             *   correction < 0 ??? ?????? ??????/?????? */
             float angle_error = g_gyro_target_angle - g_gyro.angle;
             int32_t correction = round_to_i32(g_gyro_pid.calc(angle_error));
             g_dbg_gyro_corr = correction;
 
-            if (correction >  (int32_t)g_base_speed) correction =  (int32_t)g_base_speed;
-            if (correction < -(int32_t)g_base_speed) correction = -(int32_t)g_base_speed;
+            if (correction >  PWM_MAX) correction =  PWM_MAX;
+            if (correction < -PWM_MAX) correction = -PWM_MAX;
 
-            int32_t raw_left  = (int32_t)g_base_speed + correction;
-            int32_t raw_right = (int32_t)g_base_speed - correction;
-
-            int16_t left_cmd, right_cmd;
-            apply_diff_steering(raw_left, raw_right, &left_cmd, &right_cmd, PWM_MAX);
-#if ENABLE_ENCODER
-            speed_loop_trim(&left_cmd, &right_cmd);
-#endif
-            g_motor.set_speed(left_cmd, right_cmd);
-            g_dbg_left_cmd  = left_cmd;
-            g_dbg_right_cmd = right_cmd;
+            /* ??????: ???=+correction, ???=-correction */
+            g_motor.set_speed((int16_t)correction, (int16_t)(-correction));
+            g_dbg_left_cmd  = (int16_t)correction;
+            g_dbg_right_cmd = (int16_t)(-correction);
             g_dbg_correction = correction;
             buzzer_off();
             goto control_done;
@@ -567,14 +562,8 @@ int main(void)
         /* ---- 真实毫秒时基控制周期；处理超时后不再追加整段延时。 ---- */
 
         control_done:
-        next_control_ms += CONTROL_PERIOD_MS;
-        uint32_t after_work_ms = timebase_millis();
-        if ((int32_t)(next_control_ms - after_work_ms) > 0) {
-            while ((int32_t)(next_control_ms - timebase_millis()) > 0) {
-                __NOP();
-            }
-        } else {
-            next_control_ms = after_work_ms;
+        for (volatile uint32_t d = 0; d < (CPUCLK_FREQ / 100U); d++) {
+            __NOP();
         }
     }
 }
