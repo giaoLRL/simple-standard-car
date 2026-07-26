@@ -57,6 +57,15 @@ function generatePanels(uiConfig) {
     if (controls.length) panels.push({ id: 'turn_cfg', name: '直角弯配置', controls });
   }
 
+
+  if (uiConfig.hasGyro && (params.gyroKp !== undefined || params.gyroKi !== undefined || params.gyroKd !== undefined)) {
+    const controls = [];
+    if (params.gyroKp !== undefined) controls.push({ key: 'gyroKp', name: '陀螺 KP', min: 0, max: 20, step: 0.1, value: params.gyroKp / 1000 });
+    if (params.gyroKi !== undefined) controls.push({ key: 'gyroKi', name: '陀螺 KI', min: 0, max: 1, step: 0.01, value: params.gyroKi / 1000 });
+    if (params.gyroKd !== undefined) controls.push({ key: 'gyroKd', name: '陀螺 KD', min: 0, max: 10, step: 0.1, value: params.gyroKd / 1000 });
+    if (controls.length) panels.push({ id: 'gyro_pid', name: '陀螺 PID', controls });
+  }
+
   return panels;
 }
 

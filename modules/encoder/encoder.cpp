@@ -1,6 +1,6 @@
 #include "modules/encoder/encoder.hpp"
 #include "modules/common/config.hpp"
-#include "modules/common/timebase.hpp"
+#include "modules/timebase/timebase.hpp"
 #include "ti_msp_dl_config.h"
 
 /* 全局单例 */

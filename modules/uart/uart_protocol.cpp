@@ -1,13 +1,16 @@
-﻿#include "modules/common/uart_protocol.hpp"
-#include "modules/common/uart_debug.hpp"
+﻿#include "modules/uart/uart_protocol.hpp"
+#include "modules/uart/uart_debug.hpp"
 #include "modules/common/config.hpp"
-#include "modules/common/timebase.hpp"
+#include "modules/timebase/timebase.hpp"
 #include "modules/common/iinterfaces.hpp"
 #include "modules/control/turn_state_machine.hpp"
 #include "modules/pid/pid.hpp"
 #if ENABLE_ENCODER
 #include "modules/encoder/encoder.hpp"
 #include "modules/speed_pid/speed_pid.hpp"
+#endif
+#if ENABLE_GYRO
+#include "modules/gyro/gyro_control.hpp"
 #endif
 #include "ti_msp_dl_config.h"
 
@@ -91,7 +94,7 @@ void proto_send_hello(void)
         "\"sensors\":%u,"
         "\"motors\":2,"
         "\"encoders\":%u,"
-        "\"gyro\":false,"
+        "\"gyro\":true,"
         "\"caps\":%u,"
         "\"bin\":true,"
         "\"states\":[\"STRAIGHT\",\"TURN_DELAY\",\"LEFT\",\"RIGHT\",\"LOST\"],"
@@ -111,6 +114,9 @@ void proto_send_hello(void)
 #if ENABLE_ENCODER
         ",\"speedKp\":%d,\"speedKi\":%d,\"speedKd\":%d"
 #endif
+#if ENABLE_GYRO
+        ",\"gyroKp\":%d,\"gyroKi\":%d,\"gyroKd\":%d"
+#endif
         "}"
         "}\n",
         (unsigned)SENSOR_COUNT,
@@ -125,6 +131,9 @@ void proto_send_hello(void)
         (unsigned)g_turn_timeout_ms, (unsigned)g_turn_advance_ms, (int)PWM_MAX, (unsigned)ADC_MAX_VALUE
 #if ENABLE_ENCODER
         , (int)(g_speed_kp * 1000), (int)(g_speed_ki * 1000), (int)(g_speed_kd * 1000)
+#endif
+#if ENABLE_GYRO
+        , (int)(g_gyro_kp * 1000), (int)(g_gyro_ki * 1000), (int)(g_gyro_kd * 1000)
 #endif
     );
 
@@ -281,6 +290,23 @@ static void parse_and_apply(const char *cmd, int len)
             if (n > 0 && n < (int)sizeof(rsp)) uart_debug_send(rsp);
         }
 #endif
+#if ENABLE_GYRO
+        else if (cmd_is(cmd, len, "GYRO")) {
+            g_gyro_mode_on = !g_gyro_mode_on;
+            if (g_gyro_mode_on) {
+                g_gyro_target_angle = g_gyro.angle;
+                g_gyro_pid.reset();
+            } else {
+                g_pid.reset();
+            }
+        }
+        else if (cmd_is(cmd, len, "GYRO_ZERO")) {
+            g_gyro.angle = 0.0f;
+            g_gyro_target_angle = 0.0f;
+            g_gyro_pid.reset();
+        }
+#endif
+
         else if (cmd_is(cmd, len, "RST")) {
             g_pid.kp = 0.05f;
             g_pid.ki = 0.0000f;
@@ -391,6 +417,36 @@ static void parse_and_apply(const char *cmd, int len)
         int v = parse_value(val_str);
         if (v >= 0 && v <= 1000) g_turn_advance_ms = (uint16_t)v;
     }
+
+#if ENABLE_GYRO
+    else if (cmd_is(cmd, key_len, "GYRO")) {
+        g_gyro_mode_on = (val_int != 0);
+        if (g_gyro_mode_on) {
+            g_gyro_target_angle = g_gyro.angle;
+            g_gyro_pid.reset();
+        } else {
+            g_pid.reset();
+        }
+    }
+    else if (cmd_is(cmd, key_len, "GYRO_TGT")) {
+        g_gyro_target_angle = (float)val_int / 1000.0f;
+        g_gyro_pid.reset();
+    }
+    else if (cmd_is(cmd, key_len, "GYRO_KP")) {
+        g_gyro_kp = (float)val_int / 1000.0f;
+        g_gyro_pid.kp = g_gyro_kp;
+    }
+    else if (cmd_is(cmd, key_len, "GYRO_KI")) {
+        g_gyro_ki = (float)val_int / 1000.0f;
+        g_gyro_pid.ki = g_gyro_ki;
+        g_gyro_pid.set_sum_error(0.0f);
+    }
+    else if (cmd_is(cmd, key_len, "GYRO_KD")) {
+        g_gyro_kd = (float)val_int / 1000.0f;
+        g_gyro_pid.kd = g_gyro_kd;
+    }
+#endif
+
 }
 
 void proto_poll_commands(void)

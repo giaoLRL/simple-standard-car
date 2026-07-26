@@ -1,4 +1,4 @@
-#include "modules/common/uart_debug.hpp"
+#include "modules/uart/uart_debug.hpp"
 #include "ti_msp_dl_config.h"
 
 #include <cstdarg>
@@ -16,20 +16,20 @@ static int            g_tx_remaining = 0;
 
 extern "C" void UART_1_INST_IRQHandler(void)
 {
-    while (!DL_UART_Main_isRXFIFOEmpty(UART_1_INST)) {
+    while (!DL_UART_isRXFIFOEmpty(UART_1_INST)) {
         uint8_t next = (rx_head + 1) % RX_RING_SIZE;
         if (next != rx_tail) {
-            rx_ring[rx_head] = (char)DL_UART_Main_receiveData(UART_1_INST);
+            rx_ring[rx_head] = (char)DL_UART_receiveData(UART_1_INST);
             rx_head = next;
         } else {
-            DL_UART_Main_receiveData(UART_1_INST);
+            DL_UART_receiveData(UART_1_INST);
         }
     }
 }
 void uart_debug_init(uint32_t baud_rate)
 {
     (void)baud_rate;
-    DL_UART_Main_enableInterrupt(UART_1_INST, DL_UART_MAIN_INTERRUPT_RX);
+    DL_UART_enableInterrupt(UART_1_INST, DL_UART_INTERRUPT_RX);
     NVIC_EnableIRQ(UART_1_INST_INT_IRQN);
     g_tx_data      = nullptr;
     g_tx_remaining = 0;
@@ -38,8 +38,8 @@ void uart_debug_init(uint32_t baud_rate)
 void uart_debug_continue_tx(void)
 {
     while (g_tx_data && g_tx_remaining > 0) {
-        if (DL_UART_Main_isTXFIFOFull(UART_1_INST)) return;
-        DL_UART_Main_transmitData(UART_1_INST, *g_tx_data);
+        if (DL_UART_isTXFIFOFull(UART_1_INST)) return;
+        DL_UART_transmitData(UART_1_INST, *g_tx_data);
         g_tx_data++;
         g_tx_remaining--;
     }
@@ -50,20 +50,20 @@ static void start_nonblocking_tx(const uint8_t *data, int len)
 {
     if (len <= 0) return;
     while (g_tx_data && g_tx_remaining > 0) {
-        if (DL_UART_Main_isTXFIFOFull(UART_1_INST)) break;
-        DL_UART_Main_transmitData(UART_1_INST, *g_tx_data);
+        if (DL_UART_isTXFIFOFull(UART_1_INST)) break;
+        DL_UART_transmitData(UART_1_INST, *g_tx_data);
         g_tx_data++;
         g_tx_remaining--;
     }
     if (g_tx_data && g_tx_remaining == 0) g_tx_data = nullptr;
     if (g_tx_data != nullptr) return;
     while (len > 0) {
-        if (DL_UART_Main_isTXFIFOFull(UART_1_INST)) {
+        if (DL_UART_isTXFIFOFull(UART_1_INST)) {
             g_tx_data = data;
             g_tx_remaining = len;
             return;
         }
-        DL_UART_Main_transmitData(UART_1_INST, *data);
+        DL_UART_transmitData(UART_1_INST, *data);
         data++;
         len--;
     }
@@ -103,8 +103,8 @@ void uart_debug_printf(const char *format, ...)
     if (len > 0) {
         if (len >= (int)sizeof(buf)) len = (int)sizeof(buf) - 1;
         for (int i = 0; i < len; i++) {
-            while (DL_UART_Main_isTXFIFOFull(UART_1_INST)) __NOP();
-            DL_UART_Main_transmitData(UART_1_INST, (uint8_t)buf[i]);
+            while (DL_UART_isTXFIFOFull(UART_1_INST)) __NOP();
+            DL_UART_transmitData(UART_1_INST, (uint8_t)buf[i]);
         }
     }
 }

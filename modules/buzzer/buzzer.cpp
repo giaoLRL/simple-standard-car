@@ -1,4 +1,4 @@
-#include "modules/common/buzzer.hpp"
+#include "modules/buzzer/buzzer.hpp"
 #include "modules/common/config.hpp"
 #include "ti_msp_dl_config.h"
 
@@ -17,9 +17,9 @@ void buzzer_off(void)
     DL_GPIO_clearPins(BUZZER_PORT, BUZZER_PIN);
 }
 
-void buzzer_beep(uint32_t ms)
+void buzzer_beep(uint32_t os)
 {
     buzzer_on();
-    delay_cycles(ms * (CPUCLK_FREQ / 1000U));
+    delay_cycles(os * (CPUCLK_FREQ / 1000U));
     buzzer_off();
 }

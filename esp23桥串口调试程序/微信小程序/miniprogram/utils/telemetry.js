@@ -784,7 +784,7 @@ class TelemetryService {
   }
 
   sendParam(key, value) {
-    var pidKeys = ['kp','ki','kd','speedKp','speedKi','speedKd'];
+    var pidKeys = ['kp','ki','kd','speedKp','speedKi','speedKd','gyroKp','gyroKi','gyroKd'];
     this._paramCache[key] = (pidKeys.indexOf(key) >= 0) ? Math.round(value * 1000) : value;
     const cmdMap = {
       kp: 'KP', ki: 'KI', kd: 'KD',
@@ -797,6 +797,7 @@ class TelemetryService {
       speedKp: 'SKP', speedKi: 'SKI', speedKd: 'SKD',
       gyro_kp: 'GK_kp', gyro_ki: 'GK_ki', gyro_kd: 'GK_kd',
       gyro_trim_max: 'GK_trim_max', gyro_deadzone: 'GK_deadzone', gyro_ratelimit: 'GK_ratelimit',
+      gyroKp: 'GYRO_KP', gyroKi: 'GYRO_KI', gyroKd: 'GYRO_KD',
       straight_pwm: 'CFG_straight', curve_pwm: 'CFG_curve', lost_diff: 'CFG_lost_diff'
     };
     const prefix = cmdMap[key];

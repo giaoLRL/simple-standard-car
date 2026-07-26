@@ -1,4 +1,4 @@
-﻿/*
+/*
  * line_sensor.cpp — 8 路循迹传感器模块实现
  *
  * 硬件: CD4051 模拟开关 + ADC0_CH3
@@ -22,9 +22,9 @@
  */
 
 #include "modules/line_sensor/line_sensor.hpp"
-#include "modules/common/buzzer.hpp"
-#include "modules/common/uart_debug.hpp"
-#include "modules/common/uart_protocol.hpp"
+#include "modules/buzzer/buzzer.hpp"
+#include "modules/uart/uart_debug.hpp"
+#include "modules/uart/uart_protocol.hpp"
 
 /* 全局单例 */
 LineSensor g_line_sensor;

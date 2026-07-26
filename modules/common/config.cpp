@@ -14,3 +14,11 @@ bool  g_enc_left_rev  = ENC_LEFT_REVERSED;
 bool  g_enc_right_rev = ENC_RIGHT_REVERSED;
 volatile bool g_spd_need_warmstart = true;
 #endif
+
+#if ENABLE_GYRO
+bool  g_gyro_mode_on     = true;
+float g_gyro_target_angle = 0.0f;
+float g_gyro_kp = GYRO_KP_DEFAULT;
+float g_gyro_ki = GYRO_KI_DEFAULT;
+float g_gyro_kd = GYRO_KD_DEFAULT;
+#endif

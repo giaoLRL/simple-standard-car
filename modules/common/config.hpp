@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 /*
  * config.hpp — 编译期常量、特性开关与运行时开关
  *
@@ -108,6 +108,10 @@ extern uint16_t g_turn_advance_ms;  /* 转弯前直走延时(ms), 默认50 */
 #define ENABLE_ENCODER 1                    /* 编码器速度闭环（已启用）*/
 #endif
 
+#ifndef ENABLE_GYRO
+#define ENABLE_GYRO 1                       /* 陀螺仪闭环（MPU6050, I2C 软件位操作）*/
+#endif
+
 /* ============================================================
  *  速度环参数（编译期默认值）
  * ============================================================ */
@@ -130,6 +134,20 @@ extern uint16_t g_turn_advance_ms;  /* 转弯前直走延时(ms), 默认50 */
 
 /* 编码器方向反转：正转时 RPM 读数为负 → 置 1（运行时可通过 ENCDIR 命令切换）*/
 #define ENC_LEFT_REVERSED      (0)
+
+/* ============================================================
+ *  陀螺仪参数（编译期默认值）
+ * ============================================================ */
+
+#if ENABLE_GYRO
+#define GYRO_KP_DEFAULT    5.0f
+#define GYRO_KI_DEFAULT    0.02f
+#define GYRO_KD_DEFAULT    3.0f
+#define GYRO_OUT_LIMIT     ((float)PWM_MAX)
+#define GYRO_BIAS_SAMPLES  500
+#define GYRO_DPS_PER_LSB   131.0f
+#endif
+
 #define ENC_RIGHT_REVERSED     (0)
 
 /* ============================================================
@@ -162,4 +180,13 @@ extern float g_speed_kd;        /* 速度环 KD */
 extern bool g_enc_left_rev;     /* 左编码器方向反转（运行时可切换）*/
 extern bool g_enc_right_rev;    /* 右编码器方向反转（运行时可切换）*/
 extern volatile bool g_spd_need_warmstart; /* 速度环需热启动（刚复位后首次进入）*/
+
+#if ENABLE_GYRO
+extern bool  g_gyro_mode_on;
+extern float g_gyro_target_angle;
+extern float g_gyro_kp;
+extern float g_gyro_ki;
+extern float g_gyro_kd;
+#endif
+
 #endif

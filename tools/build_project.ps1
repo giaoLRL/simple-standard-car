@@ -52,15 +52,16 @@ $compileArgs = @(
 
 $sources = @(
     @{ Source = "main.cpp"; Object = "main.o" },
-    @{ Source = "modules\common\buzzer.cpp"; Object = "buzzer.o" },
-    @{ Source = "modules\common\timebase.cpp"; Object = "timebase.o" },
-    @{ Source = "modules\common\uart_debug.cpp"; Object = "uart_debug.o" },
-    @{ Source = "modules\common\uart_protocol.cpp"; Object = "uart_protocol.o" },
+    @{ Source = "modules\buzzer\buzzer.cpp"; Object = "buzzer.o" },
+    @{ Source = "modules\timebase\timebase.cpp"; Object = "timebase.o" },
+    @{ Source = "modules\uart\uart_debug.cpp"; Object = "uart_debug.o" },
+    @{ Source = "modules\uart\uart_protocol.cpp"; Object = "uart_protocol.o" },
     @{ Source = "modules\common\config.cpp"; Object = "config.o" },
     @{ Source = "modules\control\turn_state_machine.cpp"; Object = "turn_state_machine.o" },
     @{ Source = "modules\encoder\encoder.cpp"; Object = "encoder.o" },
     @{ Source = "modules\line_sensor\line_sensor.cpp"; Object = "line_sensor.o" },
     @{ Source = "modules\motor\motor.cpp"; Object = "motor.o" },
+    @{ Source = "modules\gyro\mpu6050.cpp"; Object = "mpu6050.o" },
     @{ Source = (Join-Path $syscfgDir "ti_msp_dl_config.c"); Object = "ti_msp_dl_config.o" },
     @{
         Source = (Join-Path $sdkDir "source\ti\devices\msp\m0p\startup_system_files\ticlang\startup_mspm0g350x_ticlang.c")

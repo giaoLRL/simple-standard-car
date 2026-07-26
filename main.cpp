@@ -33,18 +33,21 @@
 #include "ti_msp_dl_config.h"
 #include "modules/common/config.hpp"
 #include "modules/common/iinterfaces.hpp"
-#include "modules/common/buzzer.hpp"
-#include "modules/common/timebase.hpp"
+#include "modules/buzzer/buzzer.hpp"
+#include "modules/timebase/timebase.hpp"
 #include "modules/control/turn_state_machine.hpp"
 #include "modules/control/steering.hpp"
 #include "modules/line_sensor/line_sensor.hpp"
 #include "modules/motor/motor.hpp"
 #include "modules/pid/pid.hpp"
-#include "modules/common/uart_protocol.hpp"
-#include "modules/common/uart_debug.hpp"
+#include "modules/uart/uart_protocol.hpp"
+#include "modules/uart/uart_debug.hpp"
 #if ENABLE_ENCODER
 #include "modules/encoder/encoder.hpp"
 #include "modules/speed_pid/speed_pid.hpp"
+#endif
+#if ENABLE_GYRO
+#include "modules/gyro/gyro_control.hpp"
 #endif
 
 /* ============================================================
@@ -85,11 +88,18 @@ PID g_spid_right(PID::delta_type, SPEED_KP_DEFAULT, SPEED_KI_DEFAULT, SPEED_KD_D
                  0.5f, 0.999f, SPEED_MAX_DELTA);
 #endif
 
+#if ENABLE_GYRO
+PID g_gyro_pid(PID::position_type, GYRO_KP_DEFAULT, GYRO_KI_DEFAULT, GYRO_KD_DEFAULT,
+               NAN, NAN,
+               GYRO_OUT_LIMIT, -GYRO_OUT_LIMIT,
+               NAN, NAN, NAN);
+#endif
+
 /* ============================================================
  *  运行时特性开关
  * ============================================================ */
 
-bool g_line_track_on = true;
+bool g_line_track_on = false;
 bool g_motor_on      = true;
 
 /* ============================================================
@@ -120,6 +130,13 @@ volatile float   g_dbg_spd_out_r = 0.0f;   /* 速度环右轮输出 (累积) */
 uint16_t g_turn_timeout_ms = 2000;              /* 直角弯超时(ms) */
 uint16_t g_turn_advance_ms = 50;                /* 直角弯前延时(ms) */
 #endif
+
+#if ENABLE_GYRO
+volatile float   g_dbg_gyro_angle  = 0.0f;   /* 当前偏航角 (°) */
+volatile float   g_dbg_gyro_dps    = 0.0f;   /* 当前陀螺 Z (°/s) */
+volatile int32_t g_dbg_gyro_corr   = 0;      /* 陀螺 PID 修正量 */
+#endif
+
 
 /* ============================================================
  *  差速转向计算
@@ -221,6 +238,7 @@ static constexpr int32_t SENSOR_ERROR_DEADBAND = 5;  /* |error|<=5 置零, 减�
 extern "C" void HardFault_Handler(void)
 {
     while (1) {
+        g_dbg_loop_cnt++;
         /* 3 声长响 (200ms on, 200ms off) */
         for (int i = 0; i < 3; i++) {
             DL_GPIO_setPins(GPIO_BUZZER_PORT, GPIO_BUZZER_BUZZER_PIN);
@@ -248,6 +266,7 @@ int main(void)
 {
     /* ===== 1. 平台初始化 ===== */
     SYSCFG_DL_init();
+    /* 硬件 I2C0 上拉: 直接写 PINCM 寄存器 (bit17=上拉使能, bit7=上拉选择) */
     /* 使能 DMA 完成中断（ADC 结果改由 DMA 搬运，不再用 ADC 中断） */
     NVIC_EnableIRQ(DMA_INT_IRQn);
     timebase_init();
@@ -262,6 +281,19 @@ int main(void)
     turn_fsm_init();
     uart_debug_init(9600);  /* 必须调用：配置 UART1 波特率 + 使能 RX 中断 */
     proto_init();
+
+#if ENABLE_GYRO
+    if (!g_gyro.init()) {
+        /* MPU6050 未检测到: 短响 2 声 */
+        buzzer_beep(100U);
+        delay_cycles(200U * (CPUCLK_FREQ / 1000U));
+        buzzer_beep(100U);
+        g_gyro_mode_on = false;
+    } else {
+        g_gyro.calibrate_bias();
+    }
+#endif
+
 
 #if ENABLE_ENCODER
     /* 编码器初始化（GPIO 中断已在 Encoder::init 内使能）*/
@@ -287,6 +319,10 @@ int main(void)
      * UART 已配好，提前发送确保小程序在 3 秒内收到握手。 */
     proto_send_hello();
 
+#if ENABLE_GYRO
+    if (!g_gyro_mode_on)
+#endif
+    {
     /* ===== 3. 传感器黑白双标定 + 系数预计算 ===== */
     /*
      * 流程：上电后把 8 路探头全部放到白底，按 PB21 按键；
@@ -299,6 +335,7 @@ int main(void)
     if (!g_line_sensor.is_ready()) {
         g_motor.stop();
         while (1) {
+        g_dbg_loop_cnt++;
             buzzer_beep(200U);
             delay_cycles(300U * (CPUCLK_FREQ / 1000U));
         }
@@ -343,6 +380,7 @@ int main(void)
     proto_send_hello();
 
 
+    } /* end of !g_gyro_mode_on block */
     /* ===== 4. 主循环 ===== */
     uint32_t next_control_ms = timebase_millis();
     while (1) {
@@ -398,6 +436,36 @@ int main(void)
         turn_fsm_update(digital, line_found, now_ms);
 
         /* ---- 控制决策 ---- */
+#if ENABLE_GYRO
+        if (g_gyro_mode_on) {
+            g_gyro.update();
+            g_dbg_gyro_angle = g_gyro.angle;
+            g_dbg_gyro_dps   = g_gyro.gyro_z_dps;
+
+            float angle_error = g_gyro_target_angle - g_gyro.angle;
+            int32_t correction = round_to_i32(g_gyro_pid.calc(angle_error));
+            g_dbg_gyro_corr = correction;
+
+            if (correction >  (int32_t)g_base_speed) correction =  (int32_t)g_base_speed;
+            if (correction < -(int32_t)g_base_speed) correction = -(int32_t)g_base_speed;
+
+            int32_t raw_left  = (int32_t)g_base_speed + correction;
+            int32_t raw_right = (int32_t)g_base_speed - correction;
+
+            int16_t left_cmd, right_cmd;
+            apply_diff_steering(raw_left, raw_right, &left_cmd, &right_cmd, PWM_MAX);
+#if ENABLE_ENCODER
+            speed_loop_trim(&left_cmd, &right_cmd);
+#endif
+            g_motor.set_speed(left_cmd, right_cmd);
+            g_dbg_left_cmd  = left_cmd;
+            g_dbg_right_cmd = right_cmd;
+            g_dbg_correction = correction;
+            buzzer_off();
+            goto control_done;
+        }
+        else
+#endif
         if (!g_line_track_on || !g_motor_on) {
             /* 功能关闭 → 停车 */
             g_motor.stop();
@@ -497,6 +565,8 @@ int main(void)
         }
 
         /* ---- 真实毫秒时基控制周期；处理超时后不再追加整段延时。 ---- */
+
+        control_done:
         next_control_ms += CONTROL_PERIOD_MS;
         uint32_t after_work_ms = timebase_millis();
         if ((int32_t)(next_control_ms - after_work_ms) > 0) {
@@ -508,3 +578,8 @@ int main(void)
         }
     }
 }
+
+
+
+
+
